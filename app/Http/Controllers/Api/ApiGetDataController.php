@@ -181,6 +181,7 @@ class ApiGetDataController extends Controller
             $dimensi = $request->input('dimensi', []);   // array
             $metriks = $request->input('metriks', null);  // string atau null
             $tables = $request->input('tables', []);      // array untuk tabel yang di-join
+            $filters = $request->input('filters', []);
 
             // Validasi dasar
             if (!is_array($dimensi) || count($dimensi) === 0) {
@@ -217,6 +218,30 @@ class ApiGetDataController extends Controller
             // Menambahkan kolom dimensi
             $query->select($dimensi);
 
+            // Filter (AND dan OR)
+            if (!empty($filters)) {
+                if (isset($filters['and'])) {
+                    foreach ($filters['and'] as $filter) {
+                        if (strtolower($filter['operator']) == 'between' && is_array($filter['value']) && count($filter['value']) == 2) {
+                            $query->whereBetween($filter['column'], [$filter['value'][0], $filter['value'][1]]);
+                        } else {
+                            $query->where($filter['column'], $filter['operator'], $filter['value']);
+                        }
+                    }
+                }
+                if (isset($filters['or'])) {
+                    $query->where(function ($q) use ($filters) {
+                        foreach ($filters['or'] as $filter) {
+                            if (strtolower($filter['operator']) == 'between' && is_array($filter['value']) && count($filter['value']) == 2) {
+                                $q->orWhereBetween($filter['column'], [$filter['value'][0], $filter['value'][1]]);
+                            } else {
+                                $q->orWhere($filter['column'], $filter['operator'], $filter['value']);
+                            }
+                        }
+                    });
+                }
+            }
+
             // Jika metriks diisi (tidak null/empty), lakukan COUNT DISTINCT
             if ($metriks) {
                 $query->addSelect(DB::raw("COUNT(DISTINCT {$metriks}) AS total_{$metriks}"));
@@ -240,14 +265,43 @@ class ApiGetDataController extends Controller
                 $joinClauses[] = "JOIN {$joinTable['table']} ON {$joinTable['on'][0]} = {$joinTable['on'][1]}";
             }
 
+            // Build filter string untuk debug
+            $filterStrings = [];
+            if (isset($filters['and'])) {
+                foreach ($filters['and'] as $filter) {
+                    if (strtolower($filter['operator']) == 'between') {
+                        $filterStrings[] = "{$filter['column']} BETWEEN '{$filter['value'][0]}' AND '{$filter['value'][1]}'";
+                    } else {
+                        $filterStrings[] = "{$filter['column']} {$filter['operator']} '{$filter['value']}'";
+                    }
+                }
+            }
+            if (isset($filters['or'])) {
+                $orFilters = [];
+                foreach ($filters['or'] as $filter) {
+                    if (strtolower($filter['operator']) == 'between') {
+                        $orFilters[] = "{$filter['column']} BETWEEN '{$filter['value'][0]}' AND '{$filter['value'][1]}'";
+                    } else {
+                        $orFilters[] = "{$filter['column']} {$filter['operator']} '{$filter['value']}'";
+                    }
+                }
+                if (!empty($orFilters)) {
+                    $filterStrings[] = '(' . implode(' OR ', $orFilters) . ')';
+                }
+            }
+
+            $whereClause = !empty($filterStrings) ? 'WHERE ' . implode(' AND ', $filterStrings) : '';
+
             $sqlForDebug = sprintf(
-                "SELECT %s, %s FROM %s %s GROUP BY %s ORDER BY %s DESC",
+                "SELECT %s, %s FROM %s %s GROUP BY %s ORDER BY %s %s",
                 implode(', ', $dimensi),
                 $metriks ? "COUNT(DISTINCT {$metriks}) as total_{$metriks}" : "",
                 $table,
                 implode(' ', $joinClauses),
+                $whereClause,
                 implode(', ', $dimensi),
-                $metriks ? "COUNT(DISTINCT {$metriks})" : implode(', ', $dimensi)
+                $metriks ? "COUNT(DISTINCT {$metriks})" : implode(', ', $dimensi),
+                $metriks ? 'DESC' : 'ASC'
             );
 
             // Eksekusi
