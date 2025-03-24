@@ -95,6 +95,7 @@ class ApiGetDataController extends Controller
             // Terima input array 'dimensi' dan (opsional) string 'metriks'
             $dimensi = $request->input('dimensi', []);   // array
             $metriks = $request->input('metriks', null); // string atau null
+            $filters = $request->input('filters', []);
 
             // Validasi dasar
             if (!is_array($dimensi) || count($dimensi) === 0) {
@@ -124,6 +125,22 @@ class ApiGetDataController extends Controller
                 ->join('pendaftaran_event', 'agenda_pelatihan.id_agenda', '=', 'pendaftaran_event.id_agenda')
                 ->join('pendaftar', 'pendaftaran_event.id_peserta', '=', 'pendaftar.id_pendaftar')
                 ->select($dimensi);
+
+            // Tambahkan filter AND
+            if (isset($filters['and']) && is_array($filters['and'])) {
+                foreach ($filters['and'] as $condition) {
+                    $query->where($condition['column'], $condition['operator'], $condition['value']);
+                }
+            }
+
+            // Tambahkan filter OR
+            if (isset($filters['or']) && is_array($filters['or'])) {
+                $query->where(function ($q) use ($filters) {
+                    foreach ($filters['or'] as $condition) {
+                        $q->orWhere($condition['column'], $condition['operator'], $condition['value']);
+                    }
+                });
+            }
 
             // Jika metriks diisi (tidak null/empty), lakukan COUNT DISTINCT
             if ($metriks) {
