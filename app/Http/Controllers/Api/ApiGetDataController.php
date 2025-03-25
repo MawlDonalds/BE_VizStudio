@@ -308,9 +308,9 @@ class ApiGetDataController extends Controller
     // public function getTableDataByColumns(Request $request, $table)
     // {
     //     try {
-    //         // Terima input array 'dimensi' dan (opsional) array 'metriks'
+    //         // Terima input array 'dimensi' dan (opsional) string 'metriks'
     //         $dimensi = $request->input('dimensi', []);   // array
-    //         $metriks = $request->input('metriks', []);    // array atau kosong
+    //         $metriks = $request->input('metriks', null);  // string atau null
     //         $tables = $request->input('tables', []);      // array untuk tabel yang di-join
 
     //         // Validasi dasar
@@ -344,8 +344,8 @@ class ApiGetDataController extends Controller
     //             }
     //         }
 
-    //         // Menambahkan kolom dimensi
-    //         $query->select($dimensi);
+    // Menambahkan kolom dimensi
+    // $query->select($dimensi);
 
     //         // Jika metriks diisi (tidak kosong), lakukan COUNT DISTINCT untuk setiap metriks
     //         foreach ($metriks as $metriksColumn) {
@@ -364,26 +364,21 @@ class ApiGetDataController extends Controller
     //             $query->orderBy($dimensi[0], 'asc');
     //         }
 
-    //         // Untuk debugging, bangun string query manual
-    //         $joinClauses = [];
-    //         foreach ($tables as $joinTable) {
-    //             $joinClauses[] = "JOIN {$joinTable['table']} ON {$joinTable['on'][0]} = {$joinTable['on'][1]}";
-    //         }
+    // Untuk debugging, bangun string query manual
+    // $joinClauses = [];
+    // foreach ($tables as $joinTable) {
+    //     $joinClauses[] = "JOIN {$joinTable['table']} ON {$joinTable['on'][0]} = {$joinTable['on'][1]}";
+    // }
 
-    //         $metricsForDebug = [];
-    //         foreach ($metriks as $metriksColumn) {
-    //             $metricsForDebug[] = "COUNT(DISTINCT {$metriksColumn}) as total_{$metriksColumn}";
-    //         }
-
-    //         $sqlForDebug = sprintf(
-    //             "SELECT %s, %s FROM %s %s GROUP BY %s ORDER BY %s DESC",
-    //             implode(', ', $dimensi),
-    //             implode(', ', $metricsForDebug),
-    //             $table,
-    //             implode(' ', $joinClauses),
-    //             implode(', ', $dimensi),
-    //             count($metriks) > 0 ? "COUNT(DISTINCT {$metriks[0]})" : implode(', ', $dimensi)
-    //         );
+    // $sqlForDebug = sprintf(
+    //     "SELECT %s, %s FROM %s %s GROUP BY %s ORDER BY %s DESC",
+    //     implode(', ', $dimensi),
+    //     $metriks ? "COUNT(DISTINCT {$metriks}) as total_{$metriks}" : "",
+    //     $table,
+    //     implode(' ', $joinClauses),
+    //     implode(', ', $dimensi),
+    //     $metriks ? "COUNT(DISTINCT {$metriks})" : implode(', ', $dimensi)
+    // );
 
     //         // Eksekusi
     //         $data = $query->get();

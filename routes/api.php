@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\ApiConnectDatabaseController;
 use App\Http\Controllers\Api\ApiGetDataController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -14,4 +15,6 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::get('/columns/{table}', [ApiGetDataController::class, 'getTableColumns']);
     Route::post('/table-data/{table}', [ApiGetDataController::class, 'getTableDataByColumns']);
     Route::post('/execute-query', [ApiGetDataController::class, 'executeQuery']);
+
+    Route::post('/fetch-database', [ApiConnectDatabaseController::class, 'connectAndFetch']);
 });
