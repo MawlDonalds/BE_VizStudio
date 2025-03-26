@@ -95,6 +95,7 @@ class ApiGetDataController extends Controller
             // Terima input array 'dimensi' dan (opsional) string 'metriks'
             $dimensi = $request->input('dimensi', []);   // array
             $metriks = $request->input('metriks', null); // string atau null
+            $filters = $request->input('filters', []);
 
             // Validasi dasar
             if (!is_array($dimensi) || count($dimensi) === 0) {
@@ -106,10 +107,10 @@ class ApiGetDataController extends Controller
 
             // Pastikan tabel ada di DB
             $tableExists = DB::select("
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = ?
-        ", [$table]);
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = ?
+            ", [$table]);
 
             if (empty($tableExists)) {
                 return response()->json([
@@ -132,6 +133,9 @@ class ApiGetDataController extends Controller
                 ->join('pendaftar', 'pendaftaran_event.id_peserta', '=', 'pendaftar.id_pendaftar')
                 ->select(DB::raw($selectColumns));
 
+            // Filter
+            $query = $this->applyFilters($query, $filters);
+
             // Group by dimensi
             $query->groupBy($dimensi);
 
@@ -148,10 +152,12 @@ class ApiGetDataController extends Controller
             JOIN agenda_pelatihan ON pelatihan.id_pelatihan = agenda_pelatihan.id_pelatihan
             JOIN pendaftaran_event ON agenda_pelatihan.id_agenda = pendaftaran_event.id_agenda
             JOIN pendaftar ON pendaftaran_event.id_peserta = pendaftar.id_pendaftar
+            %s
             GROUP BY %s ORDER BY %s DESC",
                 $selectColumns,
-                implode(', ', $dimensi),
-                $metriks ? "COUNT(DISTINCT {$metriks})" : implode(', ', $dimensi)
+               $this->buildWhereClause($filters),
+               implode(', ', $dimensi),
+               $metriks ? "COUNT(DISTINCT {$metriks})" : implode(', ', $dimensi)
             );
 
             // Eksekusi
@@ -207,247 +213,93 @@ class ApiGetDataController extends Controller
         }
     }
 
-
-
-
-
-    // public function getTableDataByColumns(Request $request, $table)
-    // {
-    //     try {
-    //         // Terima input array 'dimensi' dan (opsional) string 'metriks'
-    //         $dimensi = $request->input('dimensi', []);   // array
-    //         $metriks = $request->input('metriks', null);  // string atau null
-    //         $tables = $request->input('tables', []);      // array untuk tabel yang di-join
-
-    //         // Validasi dasar
-    //         if (!is_array($dimensi) || count($dimensi) === 0) {
-    //             return response()->json([
-    //                 'success' => false,
-    //                 'message' => 'Dimensi harus dikirim sebagai array dan minimal 1.',
-    //             ], 400);
-    //         }
-
-    //         // Pastikan tabel utama ada di DB
-    //         $tableExists = DB::select("
-    //             SELECT table_name
-    //             FROM information_schema.tables
-    //             WHERE table_schema = 'public' AND table_name = ?
-    //         ", [$table]);
-
-    //         if (empty($tableExists)) {
-    //             return response()->json([
-    //                 'success' => false,
-    //                 'message' => "Tabel '{$table}' tidak ditemukan di database.",
-    //             ], 404);
-    //         }
-
-    //         // Memulai query dengan tabel utama
-    //         $query = DB::table($table);
-
-    //         // Jika ada tabel yang perlu di-join, lakukan join dinamis
-    //         foreach ($tables as $joinTable) {
-    //             if (isset($joinTable['table']) && isset($joinTable['on'])) {
-    //                 $query->join($joinTable['table'], $joinTable['on'][0], '=', $joinTable['on'][1]);
-    //             }
-    //         }
-
-    //         // Menambahkan kolom dimensi
-    //         $query->select($dimensi);
-
-    //         // Jika metriks diisi (tidak null/empty), lakukan COUNT DISTINCT
-    //         if ($metriks) {
-    //             $query->addSelect(DB::raw("COUNT(DISTINCT {$metriks}) AS total_{$metriks}"));
-    //         }
-
-    //         // Lakukan groupBy pada seluruh kolom dimensi
-    //         $query->groupBy($dimensi);
-
-    //         // Pengurutan
-    //         if ($metriks) {
-    //             // Urut desc berdasarkan COUNT DISTINCT metriks
-    //             $query->orderBy(DB::raw("COUNT(DISTINCT {$metriks})"), 'desc');
-    //         } else {
-    //             // Jika tidak ada metriks, urutkan berdasarkan dimensi pertama
-    //             $query->orderBy($dimensi[0], 'asc');
-    //         }
-
-    //         // Untuk debugging, bangun string query manual
-    //         $joinClauses = [];
-    //         foreach ($tables as $joinTable) {
-    //             $joinClauses[] = "JOIN {$joinTable['table']} ON {$joinTable['on'][0]} = {$joinTable['on'][1]}";
-    //         }
-
-    //         $sqlForDebug = sprintf(
-    //             "SELECT %s, %s FROM %s %s GROUP BY %s ORDER BY %s DESC",
-    //             implode(', ', $dimensi),
-    //             $metriks ? "COUNT(DISTINCT {$metriks}) as total_{$metriks}" : "",
-    //             $table,
-    //             implode(' ', $joinClauses),
-    //             implode(', ', $dimensi),
-    //             $metriks ? "COUNT(DISTINCT {$metriks})" : implode(', ', $dimensi)
-    //         );
-
-    //         // Eksekusi
-    //         $data = $query->get();
-
-    //         return response()->json([
-    //             'success' => true,
-    //             'message' => 'Data berhasil dihitung berdasarkan dimensi dan metriks.',
-    //             'data' => $data,
-    //             'query' => $sqlForDebug,
-    //         ], 200);
-    //     } catch (\Exception $e) {
-    //         return response()->json([
-    //             'success' => false,
-    //             'message' => 'Terjadi kesalahan saat mengambil data.',
-    //             'error' => $e->getMessage(),
-    //         ], 500);
-    //     }
-    // }
-
-    // public function getTableDataByColumns(Request $request, $table)
-    // {
-    //     try {
-    //         // Terima input array 'dimensi' dan (opsional) string 'metriks'
-    //         $dimensi = $request->input('dimensi', []);   // array
-    //         $metriks = $request->input('metriks', null);  // string atau null
-    //         $tables = $request->input('tables', []);      // array untuk tabel yang di-join
-
-    //         // Validasi dasar
-    //         if (!is_array($dimensi) || count($dimensi) === 0) {
-    //             return response()->json([
-    //                 'success' => false,
-    //                 'message' => 'Dimensi harus dikirim sebagai array dan minimal 1.',
-    //             ], 400);
-    //         }
-
-    //         $tableExists = DB::select("
-    //         SELECT table_name
-    //         FROM information_schema.tables
-    //         WHERE table_schema = 'public' AND table_name = ?
-    //     ", [$table]);
-
-    //         if (empty($tableExists)) {
-    //             return response()->json([
-    //                 'success' => false,
-    //                 'message' => "Tabel '{$table}' tidak ditemukan di database.",
-    //             ], 404);
-    //         }
-
-    //         // Memulai query dengan tabel utama
-    //         $query = DB::table($table);
-
-    //         // Jika ada tabel yang perlu di-join, lakukan join dinamis
-    //         foreach ($tables as $joinTable) {
-    //             if (isset($joinTable['table']) && isset($joinTable['on'])) {
-    //                 $query->join($joinTable['table'], $joinTable['on'][0], '=', $joinTable['on'][1]);
-    //             }
-    //         }
-
-            // Menambahkan kolom dimensi
-            $query->select($dimensi);
-
-            // Filter (AND dan OR)
-            if (!empty($filters)) {
-                if (isset($filters['and'])) {
-                    foreach ($filters['and'] as $filter) {
-                        if (strtolower($filter['operator']) == 'between' && is_array($filter['value']) && count($filter['value']) == 2) {
-                            $query->whereBetween($filter['column'], [$filter['value'][0], $filter['value'][1]]);
-                        } else {
-                            $query->where($filter['column'], $filter['operator'], $filter['value']);
-                        }
+    public function applyFilters($query, $filters)
+    {
+        try{
+            if (!is_array($filters) || empty($filters)) {
+                return $query;
+            }
+    
+            $query->where(function ($q) use ($filters) {
+                foreach ($filters as $filter) {
+                    $column = $filter['column'] ?? null;
+                    $operator = strtolower($filter['operator'] ?? '=');
+                    $value = $filter['value'] ?? null;
+                    $logic = strtolower($filter['logic'] ?? 'and'); // and (default) atau or
+    
+                    if (!$column || !$value) {
+                        continue;
                     }
-                }
-                if (isset($filters['or'])) {
-                    $query->where(function ($q) use ($filters) {
-                        foreach ($filters['or'] as $filter) {
-                            if (strtolower($filter['operator']) == 'between' && is_array($filter['value']) && count($filter['value']) == 2) {
-                                $q->orWhereBetween($filter['column'], [$filter['value'][0], $filter['value'][1]]);
-                            } else {
-                                $q->orWhere($filter['column'], $filter['operator'], $filter['value']);
+    
+                    switch ($operator) {
+                        case 'like':
+                            $condition = [$column, 'LIKE', "%{$value}%"];
+                            break;
+    
+                        case 'between':
+                            if (is_array($value) && count($value) === 2) {
+                                $q = ($logic === 'or') ? $q->orWhereBetween($column, $value) : $q->whereBetween($column, $value);
+                                continue 2;
                             }
-                        }
-                    });
-                }
-            }
-
-            // Jika metriks diisi (tidak null/empty), lakukan COUNT DISTINCT
-            if ($metriks) {
-                $query->addSelect(DB::raw("COUNT(DISTINCT {$metriks}) AS total_{$metriks}"));
-            }
-
-    //         // Lakukan groupBy pada seluruh kolom dimensi
-    //         $query->groupBy($dimensi);
-
-            // Pengurutan
-            if ($metriks) {
-                // Urut desc berdasarkan COUNT DISTINCT metriks
-                $query->orderBy(DB::raw("COUNT(DISTINCT {$metriks})"), 'desc');
-            } else {
-                // Jika tidak ada metriks, urutkan berdasarkan dimensi pertama
-                $query->orderBy($dimensi[0], 'asc');
-            }
-
-    // Untuk debugging, bangun string query manual
-    // $joinClauses = [];
-    // foreach ($tables as $joinTable) {
-    //     $joinClauses[] = "JOIN {$joinTable['table']} ON {$joinTable['on'][0]} = {$joinTable['on'][1]}";
-    // }
-
-            // Build filter string untuk debug
-            $filterStrings = [];
-            if (isset($filters['and'])) {
-                foreach ($filters['and'] as $filter) {
-                    if (strtolower($filter['operator']) == 'between') {
-                        $filterStrings[] = "{$filter['column']} BETWEEN '{$filter['value'][0]}' AND '{$filter['value'][1]}'";
+                            continue 2;
+    
+                        default:
+                            $condition = [$column, $operator, $value];
+                            break;
+                    }
+    
+                    if ($logic === 'or') {
+                        $q->orWhere(...$condition);
                     } else {
-                        $filterStrings[] = "{$filter['column']} {$filter['operator']} '{$filter['value']}'";
+                        $q->where(...$condition);
                     }
                 }
-            }
-            if (isset($filters['or'])) {
-                $orFilters = [];
-                foreach ($filters['or'] as $filter) {
-                    if (strtolower($filter['operator']) == 'between') {
-                        $orFilters[] = "{$filter['column']} BETWEEN '{$filter['value'][0]}' AND '{$filter['value'][1]}'";
-                    } else {
-                        $orFilters[] = "{$filter['column']} {$filter['operator']} '{$filter['value']}'";
-                    }
-                }
-                if (!empty($orFilters)) {
-                    $filterStrings[] = '(' . implode(' OR ', $orFilters) . ')';
-                }
-            }
-
-            $whereClause = !empty($filterStrings) ? 'WHERE ' . implode(' AND ', $filterStrings) : '';
-
-            $sqlForDebug = sprintf(
-                "SELECT %s, %s FROM %s %s GROUP BY %s ORDER BY %s %s",
-                implode(', ', $dimensi),
-                $metriks ? "COUNT(DISTINCT {$metriks}) as total_{$metriks}" : "",
-                $table,
-                implode(' ', $joinClauses),
-                $whereClause,
-                implode(', ', $dimensi),
-                $metriks ? "COUNT(DISTINCT {$metriks})" : implode(', ', $dimensi),
-                $metriks ? 'DESC' : 'ASC'
-            );
-
-    //         // Eksekusi
-    //         $data = $query->get();
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Data berhasil dihitung berdasarkan dimensi dan metriks.',
-                'data' => $data,
-                'query' => $sqlForDebug,
-            ], 200);
+            });
+    
+            return $query;
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Terjadi kesalahan saat mengambil data.',
-                'error' => $e->getMessage(),
-            ], 500);
+            \Log::error('Error in applyFilters: ' . $e->getMessage());
+            return $query;
+        }
+    }
+        
+
+    /**
+     * Membuat WHERE clause untuk debugging query SQL
+     */
+    public function buildWhereClause($filters)
+    {
+        try{
+            if (!is_array($filters) || empty($filters)) {
+                return '';
+            }
+    
+            $clauses = [];
+            foreach ($filters as $filter) {
+                $column = $filter['column'] ?? null;
+                $operator = strtoupper($filter['operator'] ?? '=');
+                $value = $filter['value'] ?? null;
+                $logic = strtoupper($filter['logic'] ?? 'AND'); // AND atau OR
+    
+                if (!$column || $value === null) {
+                    continue;
+                }
+    
+                if ($operator === 'LIKE') {
+                    $value = "'%{$value}%'";
+                } elseif ($operator === 'BETWEEN' && is_array($value) && count($value) === 2) {
+                    $value = "{$value[0]} AND {$value[1]}";
+                } else {
+                    $value = "'{$value}'";
+                }
+    
+                $clauses[] = "{$logic} {$column} {$operator} {$value}";
+            }
+    
+            return empty($clauses) ? '' : 'WHERE ' . preg_replace('/^AND |^OR /', '', implode(' ', $clauses));
+        } catch (\Exception $e){
+            \Log::error('Error in buildWhereClause: ' . $e->getMessage());
+            return '';
         }
     }
 }
