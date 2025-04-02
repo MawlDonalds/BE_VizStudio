@@ -226,6 +226,7 @@ class ApiGetDataController extends Controller
                     $operator = strtolower($filter['operator'] ?? '=');
                     $value = $filter['value'] ?? null;
                     $logic = strtolower($filter['logic'] ?? 'and'); // and (default) atau or
+                    $mode = strtolower($filter['mode'] ?? 'include'); // include atau exclude
     
                     if (!$column || !$value) {
                         continue;
@@ -238,7 +239,11 @@ class ApiGetDataController extends Controller
     
                         case 'between':
                             if (is_array($value) && count($value) === 2) {
-                                $q = ($logic === 'or') ? $q->orWhereBetween($column, $value) : $q->whereBetween($column, $value);
+                                if ($mode === 'exclude'){
+                                    $q = ($logic === 'or') ? $q->orWhereNotBetween($column, $value) : $q->orWhereNotBetween($column, $value);
+                                } else {
+                                    $q = ($logic === 'or') ? $q->orWhereBetween($column, $value) : $q->whereBetween($column, $value);
+                                }
                                 continue 2;
                             }
                             continue 2;
@@ -247,11 +252,19 @@ class ApiGetDataController extends Controller
                             $condition = [$column, $operator, $value];
                             break;
                     }
-    
-                    if ($logic === 'or') {
-                        $q->orWhere(...$condition);
+
+                    if ($mode === 'exclude') {
+                        if ($logic === 'or') {
+                            $q->orWhereNot(...$condition);
+                        } else {
+                            $q->whereNot(...$condition);
+                        }
                     } else {
-                        $q->where(...$condition);
+                        if ($logic === 'or') {
+                            $q->orWhere(...$condition);
+                        } else {
+                            $q->where(...$condition);
+                        }
                     }
                 }
             });
@@ -280,6 +293,7 @@ class ApiGetDataController extends Controller
                 $operator = strtoupper($filter['operator'] ?? '=');
                 $value = $filter['value'] ?? null;
                 $logic = strtoupper($filter['logic'] ?? 'AND'); // AND atau OR
+                $mode = strtoupper($filter['mode'] ?? 'INCLUDE');
     
                 if (!$column || $value === null) {
                     continue;
@@ -292,8 +306,11 @@ class ApiGetDataController extends Controller
                 } else {
                     $value = "'{$value}'";
                 }
-    
-                $clauses[] = "{$logic} {$column} {$operator} {$value}";
+                if ($mode === 'EXCLUDE'){
+                    $clauses[] = "{$logic} NOT {$column} {$operator} {$value}";
+                } else {
+                    $clauses[] = "{$logic} {$column} {$operator} {$value}";
+                }
             }
     
             return empty($clauses) ? '' : 'WHERE ' . preg_replace('/^AND |^OR /', '', implode(' ', $clauses));
