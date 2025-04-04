@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ApiGetDataController extends Controller
 {
@@ -356,7 +357,7 @@ class ApiGetDataController extends Controller
     
             return $query;
         } catch (\Exception $e) {
-            \Log::error('Error in applyFilters: ' . $e->getMessage());
+            Log::error('Error in applyFilters: ' . $e->getMessage());
             return $query;
         }
     }
@@ -400,7 +401,7 @@ class ApiGetDataController extends Controller
     
             return empty($clauses) ? '' : 'WHERE ' . preg_replace('/^AND |^OR /', '', implode(' ', $clauses));
         } catch (\Exception $e){
-            \Log::error('Error in buildWhereClause: ' . $e->getMessage());
+            Log::error('Error in buildWhereClause: ' . $e->getMessage());
             return '';
         }
     }
