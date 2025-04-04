@@ -14,10 +14,10 @@ return new class extends Migration
         Schema::create('charts', function (Blueprint $table) {
             $table->id('id_chart');
             $table->unsignedBigInteger('id_canvas');
-            $table->unsignedBigInteger('id_datasources');
+            $table->unsignedBigInteger('id_datasource');
             $table->string('name');
             $table->string('chart_type');
-            $table->string('query');
+            $table->text('query');
             $table->json('config');
             $table->integer('width');
             $table->integer('height');
@@ -30,7 +30,7 @@ return new class extends Migration
             $table->boolean('is_deleted')->default(false);
 
             $table->foreign('id_canvas')->references('id_canvas')->on('canvas');
-            $table->foreign('id_datasources')->references('id_datasources')->on('datasources');
+            $table->foreign('id_datasource')->references('id_datasource')->on('datasources');
         });
     }
 

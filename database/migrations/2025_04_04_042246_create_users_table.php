@@ -21,7 +21,6 @@ return new class extends Migration
             $table->string('modified_by')->nullable();
             $table->timestamp('modified_time')->nullable();
             $table->boolean('is_deleted')->default(false);
-            $table->timestamps();
         });
     }
 

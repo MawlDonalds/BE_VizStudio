@@ -5,15 +5,21 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Canvas extends Model
+class Datasource extends Model
 {
     use HasFactory;
 
-    protected $table = 'canvas';
-    protected $primaryKey = 'id_canvas';
+    protected $table = 'datasources';
+    protected $primaryKey = 'id_datasource';
     protected $fillable = [
         'id_project',
         'name',
+        'type',
+        'host',
+        'port',
+        'database_name',
+        'username',
+        'password',
         'created_by',
         'created_time',
         'modified_by',
@@ -28,6 +34,6 @@ class Canvas extends Model
 
     public function charts()
     {
-        return $this->hasMany(Chart::class, 'id_canvas');
+        return $this->hasMany(Chart::class, 'id_datasource');
     }
 }

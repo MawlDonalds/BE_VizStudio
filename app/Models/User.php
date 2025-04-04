@@ -12,6 +12,9 @@ class User extends Authenticatable
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable;
 
+    protected $table = "users";
+    protected $primaryKey = "id_user";
+
     /**
      * The attributes that are mass assignable.
      *
@@ -21,6 +24,11 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'created_by',
+        'created_time',
+        'modified_by',
+        'modified_time',
+        'is_deleted'
     ];
 
     /**
@@ -44,5 +52,15 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    public function projects()
+    {
+        return $this->hasMany(Project::class, 'id_user');
+    }
+
+    public function projectAccess()
+    {
+        return $this->hasMany(ProjectAccess::class, 'id_user');
     }
 }

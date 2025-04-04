@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('datasources', function (Blueprint $table) {
-            $table->id('id_datasources');
+            $table->id('id_datasource');
             $table->unsignedBigInteger('id_project');
             $table->string('name');
             $table->string('type', 8);
