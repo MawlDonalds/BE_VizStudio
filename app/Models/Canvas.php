@@ -11,6 +11,7 @@ class Canvas extends Model
 
     protected $table = 'canvas';
     protected $primaryKey = 'id_canvas';
+    public $timestamps = false;
     protected $fillable = [
         'id_project',
         'name',

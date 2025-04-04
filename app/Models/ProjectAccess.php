@@ -11,6 +11,7 @@ class ProjectAccess extends Model
 
     protected $table = 'projects_access';
     protected $primaryKey = 'id_project_access';
+    public $timestamps = false;
     protected $fillable = [
         'id_project',
         'id_user',

@@ -11,6 +11,7 @@ class Project extends Model
 
     protected $table = 'projects';
     protected $primaryKey = 'id_project';
+    public $timestamps = false;
     protected $fillable = [
         'id_user',
         'name',

@@ -11,6 +11,7 @@ class Chart extends Model
 
     protected $table = 'chart';
     protected $primaryKey = 'id_chart';
+    public $timestamps = false;
     protected $fillable = [
         'id_canvas',
         'id_datasources',

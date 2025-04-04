@@ -11,6 +11,7 @@ class Datasource extends Model
 
     protected $table = 'datasources';
     protected $primaryKey = 'id_datasource';
+    public $timestamps = false;
     protected $fillable = [
         'id_project',
         'name',
