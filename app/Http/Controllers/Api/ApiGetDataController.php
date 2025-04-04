@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 
 class ApiGetDataController extends Controller
@@ -40,6 +41,90 @@ class ApiGetDataController extends Controller
             ], 500);
         }
     }
+
+//     public function getAllTables(Request $request)
+// {
+//     // Validasi input dari user
+//     $request->validate([
+//         'host' => 'required|string',
+//         'port' => 'required|integer',
+//         'database' => 'required|string',
+//         'username' => 'required|string',
+//         'password' => 'required|string',
+//     ]);
+
+//     // Tangkap input dari user
+//     $host = $request->host;
+//     $port = $request->port;
+//     $database = $request->database;
+//     $username = $request->username;
+//     $password = $request->password;
+
+//     // Konfigurasi koneksi database secara dinamis
+//     $connectionName = 'dynamic_db';
+//     Config::set("database.connections.$connectionName", [
+//         'driver' => 'pgsql', // Ganti ke 'mysql' jika menggunakan MySQL
+//         'host' => $host,
+//         'port' => $port,
+//         'database' => $database,
+//         'username' => $username,
+//         'password' => $password,
+//         'charset' => 'utf8',
+//         'collation' => 'utf8_unicode_ci',
+//         'prefix' => '',
+//         'schema' => 'public', // Hanya untuk PostgreSQL
+//     ]);
+
+//     try {
+//         // Pastikan koneksi berhasil
+//         DB::purge($connectionName);
+//         DB::connection($connectionName)->getPdo();
+
+//         // Cek driver yang digunakan (PostgreSQL atau MySQL)
+//         $driver = DB::connection($connectionName)->getDriverName();
+
+//         // Query untuk mendapatkan daftar tabel berdasarkan driver
+//         if ($driver === 'pgsql') {
+//             $query = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'";
+//         } elseif ($driver === 'mysql') {
+//             $query = "SHOW TABLES";
+//         } else {
+//             return response()->json([
+//                 'success' => false,
+//                 'message' => "Driver '$driver' tidak didukung."
+//             ], 400);
+//         }
+
+//         // Ambil daftar tabel
+//         $tables = DB::connection($connectionName)->select($query);
+
+//         // Konversi hasil berdasarkan driver
+//         if ($driver === 'pgsql') {
+//             $tableNames = array_map(fn($table) => $table->table_name, $tables);
+//         } elseif ($driver === 'mysql') {
+//             $tableNames = array_map(fn($table) => reset((array) $table), $tables);
+//         }
+
+//         // Daftar tabel yang akan diabaikan
+//         $excludedTables = ['migrations', 'personal_access_tokens'];
+
+//         // Filter tabel yang akan ditampilkan
+//         $filteredTables = array_values(array_filter($tableNames, fn($table) => !in_array($table, $excludedTables)));
+
+//         return response()->json([
+//             'success' => true,
+//             'message' => 'Daftar tabel berhasil diambil.',
+//             'data' => $filteredTables,
+//         ], 200);
+//     } catch (\Exception $e) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'Terjadi kesalahan saat mengambil daftar tabel.',
+//             'error' => $e->getMessage(),
+//         ], 500);
+//     }
+// }
+
 
     public function getTableColumns($table)
     {
