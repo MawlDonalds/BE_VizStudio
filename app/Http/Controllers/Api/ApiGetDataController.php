@@ -175,15 +175,22 @@ class ApiGetDataController extends Controller
         }
     }
 
-    public function getTableDataByColumns(Request $request, $table)
+    public function getTableDataByColumns(Request $request)
     {
         try {
-            // Terima input array 'dimensi' dan (opsional) string 'metriks'
-            $dimensi = $request->input('dimensi', []);   // array
-            $metriks = $request->input('metriks', null); // string atau null
-            $filters = $request->input('filters', []);
+            $table = $request->input('tabel');  // Nama tabel utama
+            $dimensi = $request->input('dimensi', []);  // Array dimensi
+            $metriks = $request->input('metriks', []);   // Array metriks
+            $tabelJoin = $request->input('tabel_join', []); // Array of joins
 
-            // Validasi dasar
+            // Validasi bahwa tabel ada
+            if (empty($table)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Nama tabel tidak boleh kosong.',
+                ], 400);
+            }
+
             if (!is_array($dimensi) || count($dimensi) === 0) {
                 return response()->json([
                     'success' => false,
@@ -193,9 +200,9 @@ class ApiGetDataController extends Controller
 
             // Pastikan tabel ada di DB
             $tableExists = DB::select("
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public' AND table_name = ?
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = ?
             ", [$table]);
 
             if (empty($tableExists)) {
@@ -205,55 +212,71 @@ class ApiGetDataController extends Controller
                 ], 404);
             }
 
-            // Menghindari trailing comma dengan memeriksa dimensi
-            $selectColumns = implode(', ', array_map(fn($column) => "\"{$column}\"", $dimensi));
+            // Mulai membangun query dasar dengan tabel utama yang diterima
+            $query = DB::table($table);
 
-            // Jika ada metriks, tambahkan ke select
-            if ($metriks) {
-                $selectColumns .= ", COUNT(DISTINCT {$metriks}) AS total_{$metriks}";
+            // Set tabel sebelumnya untuk referensi dalam join
+            $previousTable = $table;
+
+            // Lakukan join berdasarkan urutan tabel yang diberikan dalam input
+            foreach ($tabelJoin as $join) {
+                $joinTable = isset($join['tabel']) ? $join['tabel'] : null;
+                $joinType = strtoupper($join['join_type']); // pastikan join_type adalah 'inner', 'left', 'right', dll.
+
+                // Cari foreign key antara tabel yang sedang di-join
+                $foreignKey = $this->getForeignKey($previousTable, $joinTable);
+
+                if ($foreignKey) {
+                    // Gabungkan tabel menggunakan relasi foreign key yang ditemukan
+                    $query->join(
+                        $joinTable,
+                        "{$previousTable}.{$foreignKey->foreign_column}",
+                        '=',
+                        "{$joinTable}.{$foreignKey->referenced_column}",
+                        $joinType
+                    );
+                } else {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Relasi antara {$previousTable} dan {$joinTable} tidak ditemukan.",
+                    ], 400);
+                }
+
+                // Perbarui previousTable agar selalu mengarah ke tabel yang baru di-join
+                $previousTable = $joinTable;
             }
 
-            $query = DB::table('pelatihan')
-                ->join('agenda_pelatihan', 'pelatihan.id_pelatihan', '=', 'agenda_pelatihan.id_pelatihan')
-                ->join('pendaftaran_event', 'agenda_pelatihan.id_agenda', '=', 'pendaftaran_event.id_agenda')
-                ->join('pendaftar', 'pendaftaran_event.id_peserta', '=', 'pendaftar.id_pendaftar')
-                ->select(DB::raw($selectColumns));
+            // Pilih kolom yang dibutuhkan (dimensi)
+            $query->select(DB::raw(implode(', ', $dimensi)));
 
-            // Filter
-            $query = $this->applyFilters($query, $filters);
+            // Menambahkan metriks jika ada
+            foreach ($metriks as $metriksColumn) {
+                // Ambil nama kolom saja (hapus nama tabelnya) untuk alias yang lebih singkat
+                $columnName = last(explode('.', $metriksColumn)); // Mengambil nama kolom setelah titik (jika ada)
+                $query->addSelect(DB::raw("COUNT(DISTINCT {$metriksColumn}) AS total_{$columnName}"));
+            }
 
             // Group by dimensi
             $query->groupBy($dimensi);
 
             // Order by dimensi atau metriks
-            if ($metriks) {
-                $query->orderBy(DB::raw("COUNT(DISTINCT {$metriks})"), 'desc');
+            if (!empty($metriks)) {
+                $query->orderBy(DB::raw("COUNT(DISTINCT {$metriks[0]})"), 'desc');
             } else {
                 $query->orderBy($dimensi[0], 'asc');
             }
 
-            // Untuk debugging, bangun string query manual
-            $sqlForDebug = sprintf(
-                "SELECT %s FROM pelatihan
-            JOIN agenda_pelatihan ON pelatihan.id_pelatihan = agenda_pelatihan.id_pelatihan
-            JOIN pendaftaran_event ON agenda_pelatihan.id_agenda = pendaftaran_event.id_agenda
-            JOIN pendaftar ON pendaftaran_event.id_peserta = pendaftar.id_pendaftar
-            %s
-            GROUP BY %s ORDER BY %s DESC",
-                $selectColumns,
-                $this->buildWhereClause($filters),
-                implode(', ', $dimensi),
-                $metriks ? "COUNT(DISTINCT {$metriks})" : implode(', ', $dimensi)
-            );
+            // Bangun string query untuk debugging
+            $sqlForDebug = $query->toSql();
 
-            // Eksekusi
+            // Eksekusi query
             $data = $query->get();
 
             return response()->json([
                 'success' => true,
                 'message' => 'Data berhasil dihitung berdasarkan dimensi dan metriks.',
                 'data' => $data,
-                'query' => $sqlForDebug,
+                'query' => $sqlForDebug,  // Menambahkan query untuk debugging
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
@@ -262,6 +285,48 @@ class ApiGetDataController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    private function getForeignKey($table, $joinTable)
+    {
+        // Pertama, coba cari foreign key langsung dari table ke joinTable
+        $foreignKeys = DB::select("
+        SELECT kcu.column_name AS foreign_column, ccu.column_name AS referenced_column
+        FROM information_schema.key_column_usage kcu
+        JOIN information_schema.constraint_column_usage ccu
+            ON kcu.constraint_name = ccu.constraint_name
+        JOIN information_schema.table_constraints tc
+            ON tc.constraint_name = kcu.constraint_name
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+            AND lower(kcu.table_name) = lower(?) 
+            AND lower(ccu.table_name) = lower(?)
+    ", [strtolower($table), strtolower($joinTable)]);
+
+        // Jika foreign key ditemukan, langsung kembalikan
+        if (count($foreignKeys) > 0) {
+            return $foreignKeys[0];  // Mengembalikan kolom foreign key langsung
+        }
+
+        // Jika tidak ditemukan, coba cari relasi dari joinTable ke table
+        $foreignKeysReverse = DB::select(" 
+        SELECT kcu.column_name AS foreign_column, ccu.column_name AS referenced_column
+        FROM information_schema.key_column_usage kcu
+        JOIN information_schema.constraint_column_usage ccu
+            ON kcu.constraint_name = ccu.constraint_name
+        JOIN information_schema.table_constraints tc
+            ON tc.constraint_name = kcu.constraint_name
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+            AND lower(kcu.table_name) = lower(?) 
+            AND lower(ccu.table_name) = lower(?)
+    ", [strtolower($joinTable), strtolower($table)]);
+
+        // Jika ditemukan relasi balik, kembalikan
+        if (count($foreignKeysReverse) > 0) {
+            return $foreignKeysReverse[0]; // Mengembalikan foreign key yang ditemukan dari sisi sebaliknya
+        }
+
+        // Tidak ditemukan foreign key
+        return null;
     }
 
 
