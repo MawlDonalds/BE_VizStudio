@@ -214,6 +214,7 @@ class ApiGetDataController extends Controller
             $dimensi = $request->input('dimensi', []);  // Array dimensi
             $metriks = $request->input('metriks', []);   // Array metriks
             $tabelJoin = $request->input('tabel_join', []); // Array of joins
+            $filters = $request->input('filters', []); // Array of filters
 
             // Validasi bahwa tabel ada
             if (empty($table)) {
@@ -298,8 +299,13 @@ class ApiGetDataController extends Controller
                 $query->orderBy($dimensi[0], 'asc');
             }
 
+            // Apply filters ke query builder
+            $query = $this->applyFilters($query, $filters);
+            $whereClause = $this->buildWhereClause($filters);
+
             // Bangun string query untuk debugging
-            $sqlForDebug = $query->toSql();
+            //$sqlForDebug = $query->toSql();
+            $sqlForDebug = vsprintf(str_replace('?', "'%s'", $query->toSql()), $query->getBindings());
 
             // Eksekusi query
             $data = $query->get();
@@ -450,9 +456,17 @@ class ApiGetDataController extends Controller
                         case 'between':
                             if (is_array($value) && count($value) === 2) {
                                 if ($mode === 'exclude') {
-                                    $q = ($logic === 'or') ? $q->orWhereNotBetween($column, $value) : $q->orWhereNotBetween($column, $value);
+                                    if ($logic === 'or') {
+                                        $q->orWhereNotBetween($column, $value);
+                                    } else {
+                                        $q->whereNotBetween($column, $value);
+                                    }
                                 } else {
-                                    $q = ($logic === 'or') ? $q->orWhereBetween($column, $value) : $q->whereBetween($column, $value);
+                                    if ($logic === 'or') {
+                                        $q->orWhereBetween($column, $value);
+                                    } else {
+                                        $q->whereBetween($column, $value);
+                                    }
                                 }
                                 continue 2;
                             }
