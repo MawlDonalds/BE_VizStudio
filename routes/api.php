@@ -19,7 +19,10 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::post('/fetch-database', [ApiConnectDatabaseController::class, 'connectDB']);
     Route::get('/fetch-table/{id}', [ApiConnectDatabaseController::class, 'fetchTables']);
     Route::get('/fetch-column/{table}', [ApiConnectDatabaseController::class, 'getTableColumns']);
-    Route::post('/fetch-data/{table}', [ApiConnectDatabaseController::class, 'getTableDataByColumns']);
+    // Route::post('/fetch-data/{table}', [ApiConnectDatabaseController::class, 'getTableDataByColumns']);
 
-    Route::post('/table-data', [ApiGetDataController::class, 'getTableDataByColumns']);
+    Route::post('/fetch-data', [ApiGetDataController::class, 'getTableDataByColumns']);
+
+    Route::post('/check-foreign-key', [ApiConnectDatabaseController::class, 'checkIfForeignKey']);
+    // Route::post('/table-data', [ApiGetDataController::class, 'getTableDataByColumns']);
 });

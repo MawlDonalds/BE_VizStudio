@@ -206,90 +206,14 @@ class ApiConnectDatabaseController extends Controller
         }
     }
 
-    public function getTableDataByColumns(Request $request, $table)
-    {
-        try {
-            $idDatasource = 1;
-
-            $dimensi = $request->input('dimensi', []);
-            $metriks = $request->input('metriks', null);
-            $filters = $request->input('filters', []);
-
-            if (!is_array($dimensi) || count($dimensi) === 0) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Dimensi harus dikirim sebagai array dan minimal 1.',
-                ], 400);
-            }
-
-            // Ambil koneksi database dari datasources
-            $dbConfig = $this->getConnectionDetails($idDatasource);
-
-            // Buat koneksi on-the-fly
-            config(["database.connections.dynamic" => $dbConfig]);
-
-            // Gunakan koneksi yang baru dibuat
-            $connection = DB::connection('dynamic');
-
-            // Periksa apakah tabel ada
-            $tableExists = $connection->select("
-                SELECT table_name FROM information_schema.tables 
-                WHERE table_schema = 'public' AND table_name = ?
-            ", [$table]);
-
-            if (empty($tableExists)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => "Tabel '{$table}' tidak ditemukan di database."
-                ], 404);
-            }
-
-            // Susun kolom SELECT
-            $selectColumns = implode(', ', array_map(fn($column) => "\"{$column}\"", $dimensi));
-            if ($metriks) {
-                $selectColumns .= ", COUNT(DISTINCT {$metriks}) AS total_{$metriks}";
-            }
-
-            // Query utama
-            $query = $connection->table($table)->selectRaw($selectColumns);
-
-            // Terapkan filter
-            $query = $this->applyFilters($query, $filters);
-
-            // Group by dimensi
-            $query->groupBy($dimensi);
-
-            // Urutkan data
-            if ($metriks) {
-                $query->orderByRaw("COUNT(DISTINCT {$metriks}) DESC");
-            } else {
-                $query->orderBy($dimensi[0], 'asc');
-            }
-
-            // Eksekusi query
-            $data = $query->get();
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Data berhasil diambil berdasarkan dimensi dan metriks.',
-                'data'    => $data,
-            ], 200);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Terjadi kesalahan saat mengambil data.',
-                'error'   => $e->getMessage(),
-            ], 500);
-        }
-    }
 
     public function applyFilters($query, $filters)
     {
-        try{
+        try {
             if (!is_array($filters) || empty($filters)) {
                 return $query;
             }
-    
+
             $query->where(function ($q) use ($filters) {
                 foreach ($filters as $filter) {
                     $column = $filter['column'] ?? null;
@@ -297,19 +221,19 @@ class ApiConnectDatabaseController extends Controller
                     $value = $filter['value'] ?? null;
                     $logic = strtolower($filter['logic'] ?? 'and'); // and (default) atau or
                     $mode = strtolower($filter['mode'] ?? 'include'); // include atau exclude
-    
+
                     if (!$column || !$value) {
                         continue;
                     }
-    
+
                     switch ($operator) {
                         case 'like':
                             $condition = [$column, 'LIKE', "%{$value}%"];
                             break;
-    
+
                         case 'between':
                             if (is_array($value) && count($value) === 2) {
-                                if ($mode === 'exclude'){
+                                if ($mode === 'exclude') {
                                     $q = ($logic === 'or') ? $q->orWhereNotBetween($column, $value) : $q->orWhereNotBetween($column, $value);
                                 } else {
                                     $q = ($logic === 'or') ? $q->orWhereBetween($column, $value) : $q->whereBetween($column, $value);
@@ -317,7 +241,7 @@ class ApiConnectDatabaseController extends Controller
                                 continue 2;
                             }
                             continue 2;
-    
+
                         default:
                             $condition = [$column, $operator, $value];
                             break;
@@ -338,13 +262,14 @@ class ApiConnectDatabaseController extends Controller
                     }
                 }
             });
-    
+
             return $query;
         } catch (\Exception $e) {
             Log::error('Error in applyFilters: ' . $e->getMessage());
             return $query;
         }
     }
+
     // public function connectAndFetch(Request $request)
     // {
     //     // Validasi input dari user

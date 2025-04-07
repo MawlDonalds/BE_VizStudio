@@ -175,9 +175,41 @@ class ApiGetDataController extends Controller
         }
     }
 
+    private function getConnectionDetails($idDatasource)
+    {
+        $datasource = DB::table('datasources')->where('id_datasource', $idDatasource)->first();
+
+        if (!$datasource) {
+            throw new \Exception("Datasource dengan ID {$idDatasource} tidak ditemukan.");
+        }
+
+        return [
+            'driver'    => $datasource->type,
+            'host'      => $datasource->host,
+            'port'      => $datasource->port,
+            'database'  => $datasource->database_name,
+            'username'  => $datasource->username,
+            'password'  => $datasource->password,
+            'charset'   => 'utf8',
+            'collation' => 'utf8_unicode_ci',
+            'prefix'    => '',
+            'schema'    => 'public',
+        ];
+    }
+
     public function getTableDataByColumns(Request $request)
     {
         try {
+            // Ambil koneksi database dari datasources
+            $idDatasource = 1; // Hardcode datasource ID 1
+            $dbConfig = $this->getConnectionDetails($idDatasource);
+
+            // Buat koneksi on-the-fly
+            config(["database.connections.dynamic" => $dbConfig]);
+
+            // Gunakan koneksi yang baru dibuat
+            $connection = DB::connection('dynamic');
+
             $table = $request->input('tabel');  // Nama tabel utama
             $dimensi = $request->input('dimensi', []);  // Array dimensi
             $metriks = $request->input('metriks', []);   // Array metriks
@@ -199,11 +231,11 @@ class ApiGetDataController extends Controller
             }
 
             // Pastikan tabel ada di DB
-            $tableExists = DB::select("
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_name = ?
-            ", [$table]);
+            $tableExists = $connection->select("
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = ?
+        ", [$table]);
 
             if (empty($tableExists)) {
                 return response()->json([
@@ -213,7 +245,7 @@ class ApiGetDataController extends Controller
             }
 
             // Mulai membangun query dasar dengan tabel utama yang diterima
-            $query = DB::table($table);
+            $query = $connection->table($table);
 
             // Set tabel sebelumnya untuk referensi dalam join
             $previousTable = $table;
@@ -287,49 +319,65 @@ class ApiGetDataController extends Controller
         }
     }
 
+
     private function getForeignKey($table, $joinTable)
     {
-        // Pertama, coba cari foreign key langsung dari table ke joinTable
-        $foreignKeys = DB::select("
-        SELECT kcu.column_name AS foreign_column, ccu.column_name AS referenced_column
-        FROM information_schema.key_column_usage kcu
-        JOIN information_schema.constraint_column_usage ccu
-            ON kcu.constraint_name = ccu.constraint_name
-        JOIN information_schema.table_constraints tc
-            ON tc.constraint_name = kcu.constraint_name
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-            AND lower(kcu.table_name) = lower(?) 
-            AND lower(ccu.table_name) = lower(?)
-    ", [strtolower($table), strtolower($joinTable)]);
+        try {
+            // Pastikan koneksi yang digunakan adalah koneksi yang telah dikonfigurasi dinamis
+            $connection = DB::connection('dynamic');
 
-        // Jika foreign key ditemukan, langsung kembalikan
-        if (count($foreignKeys) > 0) {
-            return $foreignKeys[0];  // Mengembalikan kolom foreign key langsung
+            // Log untuk memeriksa input
+            Log::info("Mencari foreign key antara {$table} dan {$joinTable}");
+
+            // Pertama, coba cari foreign key langsung dari table ke joinTable
+            $foreignKeys = $connection->select("
+            SELECT kcu.column_name AS foreign_column, ccu.column_name AS referenced_column
+            FROM information_schema.key_column_usage kcu
+            JOIN information_schema.constraint_column_usage ccu
+                ON kcu.constraint_name = ccu.constraint_name
+            JOIN information_schema.table_constraints tc
+                ON tc.constraint_name = kcu.constraint_name
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+                AND lower(kcu.table_name) = lower(?) 
+                AND lower(ccu.table_name) = lower(?)
+        ", [strtolower($table), strtolower($joinTable)]);
+
+            // Log hasil foreign key pertama
+            Log::info("Hasil pencarian foreign key pertama: ", ['foreignKeys' => $foreignKeys]);
+
+            // Jika foreign key ditemukan, langsung kembalikan
+            if (count($foreignKeys) > 0) {
+                return $foreignKeys[0];  // Mengembalikan kolom foreign key langsung
+            }
+
+            // Jika tidak ditemukan, coba cari relasi dari joinTable ke table
+            $foreignKeysReverse = $connection->select(" 
+            SELECT kcu.column_name AS foreign_column, ccu.column_name AS referenced_column
+            FROM information_schema.key_column_usage kcu
+            JOIN information_schema.constraint_column_usage ccu
+                ON kcu.constraint_name = ccu.constraint_name
+            JOIN information_schema.table_constraints tc
+                ON tc.constraint_name = kcu.constraint_name
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+                AND lower(kcu.table_name) = lower(?) 
+                AND lower(ccu.table_name) = lower(?)
+        ", [strtolower($joinTable), strtolower($table)]);
+
+            // Log hasil foreign key kedua (reverse)
+            Log::info("Hasil pencarian foreign key reverse: ", ['foreignKeysReverse' => $foreignKeysReverse]);
+
+            // Jika ditemukan relasi balik, kembalikan
+            if (count($foreignKeysReverse) > 0) {
+                return $foreignKeysReverse[0]; // Mengembalikan foreign key yang ditemukan dari sisi sebaliknya
+            }
+
+            // Tidak ditemukan foreign key
+            return null;
+        } catch (\Exception $e) {
+            Log::error("Terjadi kesalahan saat mencari foreign key: ", ['error' => $e->getMessage()]);
+            return null;
         }
-
-        // Jika tidak ditemukan, coba cari relasi dari joinTable ke table
-        $foreignKeysReverse = DB::select(" 
-        SELECT kcu.column_name AS foreign_column, ccu.column_name AS referenced_column
-        FROM information_schema.key_column_usage kcu
-        JOIN information_schema.constraint_column_usage ccu
-            ON kcu.constraint_name = ccu.constraint_name
-        JOIN information_schema.table_constraints tc
-            ON tc.constraint_name = kcu.constraint_name
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-            AND lower(kcu.table_name) = lower(?) 
-            AND lower(ccu.table_name) = lower(?)
-    ", [strtolower($joinTable), strtolower($table)]);
-
-        // Jika ditemukan relasi balik, kembalikan
-        if (count($foreignKeysReverse) > 0) {
-            return $foreignKeysReverse[0]; // Mengembalikan foreign key yang ditemukan dari sisi sebaliknya
-        }
-
-        // Tidak ditemukan foreign key
-        return null;
     }
-
-
 
     public function executeQuery(Request $request)
     {
@@ -345,8 +393,18 @@ class ApiGetDataController extends Controller
                 ], 400);
             }
 
+            // Ambil koneksi database dari datasources (hardcoded untuk ID 1)
+            $idDatasource = 1; // Hardcode datasource ID 1
+            $dbConfig = $this->getConnectionDetails($idDatasource);
+
+            // Buat koneksi on-the-fly menggunakan konfigurasi yang sudah diambil
+            config(["database.connections.dynamic" => $dbConfig]);
+
+            // Gunakan koneksi yang baru dibuat
+            $connection = DB::connection('dynamic');
+
             // Menjalankan query SQL yang diberikan
-            $result = DB::select($query);
+            $result = $connection->select($query);
 
             // Mengembalikan hasil query
             return response()->json([
@@ -363,6 +421,7 @@ class ApiGetDataController extends Controller
             ], 500);
         }
     }
+
 
     public function applyFilters($query, $filters)
     {
