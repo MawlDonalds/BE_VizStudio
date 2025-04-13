@@ -211,8 +211,8 @@ class ApiGetDataController extends Controller
             $connection = DB::connection('dynamic');
 
             $table = $request->input('tabel');  // Nama tabel utama
-            $dimensi = $request->input('dimensi', []);  // Array dimensi
-            $metriks = $request->input('metriks', []);   // Array metriks
+            $dimensi = $request->input('dimensi', []);  // Array dimensi, bisa kosong
+            $metriks = $request->input('metriks', []);   // Array metriks, bisa kosong
             $tabelJoin = $request->input('tabel_join', []); // Array of joins
             $filters = $request->input('filters', []); // Array of filters
 
@@ -224,19 +224,12 @@ class ApiGetDataController extends Controller
                 ], 400);
             }
 
-            if (!is_array($dimensi) || count($dimensi) === 0) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Dimensi harus dikirim sebagai array dan minimal 1.',
-                ], 400);
-            }
-
             // Pastikan tabel ada di DB
             $tableExists = $connection->select("
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public' AND table_name = ?
-        ", [$table]);
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = ?
+    ", [$table]);
 
             if (empty($tableExists)) {
                 return response()->json([
@@ -279,23 +272,65 @@ class ApiGetDataController extends Controller
                 $previousTable = $joinTable;
             }
 
-            // Pilih kolom yang dibutuhkan (dimensi)
-            $query->select(DB::raw(implode(', ', $dimensi)));
-
-            // Menambahkan metriks jika ada
-            foreach ($metriks as $metriksColumn) {
-                // Ambil nama kolom saja (hapus nama tabelnya) untuk alias yang lebih singkat
-                $columnName = last(explode('.', $metriksColumn)); // Mengambil nama kolom setelah titik (jika ada)
-                $query->addSelect(DB::raw("COUNT(DISTINCT {$metriksColumn}) AS total_{$columnName}"));
+            // Pilih kolom yang dibutuhkan (dimensi) jika ada
+            if (!empty($dimensi)) {
+                $query->select(DB::raw(implode(', ', $dimensi)));
             }
 
-            // Group by dimensi
-            $query->groupBy($dimensi);
-
-            // Order by dimensi atau metriks
+            // Menambahkan metriks jika ada
             if (!empty($metriks)) {
-                $query->orderBy(DB::raw("COUNT(DISTINCT {$metriks[0]})"), 'desc');
-            } else {
+                foreach ($metriks as $metriksColumn) {
+                    // Ambil nama kolom dan jenis agregasi
+                    $columnParts = explode('|', $metriksColumn);
+                    $columnName = $columnParts[0]; // Kolom yang digunakan
+                    $aggregationType = isset($columnParts[1]) ? strtoupper($columnParts[1]) : 'COUNT'; // Tipe agregasi default COUNT
+
+                    // Hilangkan nama tabel dari alias
+                    $columnAlias = last(explode('.', $columnName)); // Ambil nama kolom saja, hilangkan nama tabel
+
+                    // Tentukan jenis agregasi (COUNT, SUM, AVERAGE)
+                    switch ($aggregationType) {
+                        case 'SUM':
+                            $query->addSelect(DB::raw("SUM({$columnName}) AS total_{$columnAlias}"));
+                            break;
+                        case 'AVERAGE':
+                            $query->addSelect(DB::raw("AVG({$columnName}) AS avg_{$columnAlias}"));
+                            break;
+                        case 'COUNT':
+                        default:
+                            $query->addSelect(DB::raw("COUNT(DISTINCT {$columnName}) AS total_{$columnAlias}"));
+                            break;
+                    }
+                }
+            }
+
+            // Group by dimensi hanya jika dimensi ada
+            if (!empty($dimensi)) {
+                $query->groupBy($dimensi);
+            }
+
+            // Order by dimensi atau metriks (perbaiki bagian orderBy)
+            if (!empty($metriks)) {
+                // Ambil kolom pertama dari metriks dan identifikasi agregasi untuk sorting
+                $metriksParts = explode('|', $metriks[0]);
+                $metriksColumn = $metriksParts[0];
+                $aggregationType = isset($metriksParts[1]) ? strtoupper($metriksParts[1]) : 'COUNT';
+
+                // Tentukan agregasi yang benar untuk orderBy
+                switch ($aggregationType) {
+                    case 'SUM':
+                        $query->orderBy(DB::raw("SUM({$metriksColumn})"), 'desc');
+                        break;
+                    case 'AVERAGE':
+                        $query->orderBy(DB::raw("AVG({$metriksColumn})"), 'desc');
+                        break;
+                    case 'COUNT':
+                    default:
+                        $query->orderBy(DB::raw("COUNT(DISTINCT {$metriksColumn})"), 'desc');
+                        break;
+                }
+            } elseif (!empty($dimensi)) {
+                // Jika tidak ada metriks, defaultnya berdasarkan dimensi
                 $query->orderBy($dimensi[0], 'asc');
             }
 
@@ -324,6 +359,7 @@ class ApiGetDataController extends Controller
             ], 500);
         }
     }
+
 
 
     private function getForeignKey($table, $joinTable)
