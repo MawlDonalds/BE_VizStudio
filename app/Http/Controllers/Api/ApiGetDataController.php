@@ -43,90 +43,6 @@ class ApiGetDataController extends Controller
         }
     }
 
-    //     public function getAllTables(Request $request)
-    // {
-    //     // Validasi input dari user
-    //     $request->validate([
-    //         'host' => 'required|string',
-    //         'port' => 'required|integer',
-    //         'database' => 'required|string',
-    //         'username' => 'required|string',
-    //         'password' => 'required|string',
-    //     ]);
-
-    //     // Tangkap input dari user
-    //     $host = $request->host;
-    //     $port = $request->port;
-    //     $database = $request->database;
-    //     $username = $request->username;
-    //     $password = $request->password;
-
-    //     // Konfigurasi koneksi database secara dinamis
-    //     $connectionName = 'dynamic_db';
-    //     Config::set("database.connections.$connectionName", [
-    //         'driver' => 'pgsql', // Ganti ke 'mysql' jika menggunakan MySQL
-    //         'host' => $host,
-    //         'port' => $port,
-    //         'database' => $database,
-    //         'username' => $username,
-    //         'password' => $password,
-    //         'charset' => 'utf8',
-    //         'collation' => 'utf8_unicode_ci',
-    //         'prefix' => '',
-    //         'schema' => 'public', // Hanya untuk PostgreSQL
-    //     ]);
-
-    //     try {
-    //         // Pastikan koneksi berhasil
-    //         DB::purge($connectionName);
-    //         DB::connection($connectionName)->getPdo();
-
-    //         // Cek driver yang digunakan (PostgreSQL atau MySQL)
-    //         $driver = DB::connection($connectionName)->getDriverName();
-
-    //         // Query untuk mendapatkan daftar tabel berdasarkan driver
-    //         if ($driver === 'pgsql') {
-    //             $query = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'";
-    //         } elseif ($driver === 'mysql') {
-    //             $query = "SHOW TABLES";
-    //         } else {
-    //             return response()->json([
-    //                 'success' => false,
-    //                 'message' => "Driver '$driver' tidak didukung."
-    //             ], 400);
-    //         }
-
-    //         // Ambil daftar tabel
-    //         $tables = DB::connection($connectionName)->select($query);
-
-    //         // Konversi hasil berdasarkan driver
-    //         if ($driver === 'pgsql') {
-    //             $tableNames = array_map(fn($table) => $table->table_name, $tables);
-    //         } elseif ($driver === 'mysql') {
-    //             $tableNames = array_map(fn($table) => reset((array) $table), $tables);
-    //         }
-
-    //         // Daftar tabel yang akan diabaikan
-    //         $excludedTables = ['migrations', 'personal_access_tokens'];
-
-    //         // Filter tabel yang akan ditampilkan
-    //         $filteredTables = array_values(array_filter($tableNames, fn($table) => !in_array($table, $excludedTables)));
-
-    //         return response()->json([
-    //             'success' => true,
-    //             'message' => 'Daftar tabel berhasil diambil.',
-    //             'data' => $filteredTables,
-    //         ], 200);
-    //     } catch (\Exception $e) {
-    //         return response()->json([
-    //             'success' => false,
-    //             'message' => 'Terjadi kesalahan saat mengambil daftar tabel.',
-    //             'error' => $e->getMessage(),
-    //         ], 500);
-    //     }
-    // }
-
-
     public function getTableColumns($table)
     {
         try {
@@ -211,8 +127,8 @@ class ApiGetDataController extends Controller
             $connection = DB::connection('dynamic');
 
             $table = $request->input('tabel');  // Nama tabel utama
-            $dimensi = $request->input('dimensi', []);  // Array dimensi
-            $metriks = $request->input('metriks', []);   // Array metriks
+            $dimensi = $request->input('dimensi', []);  // Array dimensi, bisa kosong
+            $metriks = $request->input('metriks', []);   // Array metriks, bisa kosong
             $tabelJoin = $request->input('tabel_join', []); // Array of joins
             $filters = $request->input('filters', []); // Array of filters
 
@@ -224,19 +140,12 @@ class ApiGetDataController extends Controller
                 ], 400);
             }
 
-            if (!is_array($dimensi) || count($dimensi) === 0) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Dimensi harus dikirim sebagai array dan minimal 1.',
-                ], 400);
-            }
-
             // Pastikan tabel ada di DB
             $tableExists = $connection->select("
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public' AND table_name = ?
-        ", [$table]);
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = ?
+    ", [$table]);
 
             if (empty($tableExists)) {
                 return response()->json([
@@ -279,23 +188,65 @@ class ApiGetDataController extends Controller
                 $previousTable = $joinTable;
             }
 
-            // Pilih kolom yang dibutuhkan (dimensi)
-            $query->select(DB::raw(implode(', ', $dimensi)));
-
-            // Menambahkan metriks jika ada
-            foreach ($metriks as $metriksColumn) {
-                // Ambil nama kolom saja (hapus nama tabelnya) untuk alias yang lebih singkat
-                $columnName = last(explode('.', $metriksColumn)); // Mengambil nama kolom setelah titik (jika ada)
-                $query->addSelect(DB::raw("COUNT(DISTINCT {$metriksColumn}) AS total_{$columnName}"));
+            // Pilih kolom yang dibutuhkan (dimensi) jika ada
+            if (!empty($dimensi)) {
+                $query->select(DB::raw(implode(', ', $dimensi)));
             }
 
-            // Group by dimensi
-            $query->groupBy($dimensi);
-
-            // Order by dimensi atau metriks
+            // Menambahkan metriks jika ada
             if (!empty($metriks)) {
-                $query->orderBy(DB::raw("COUNT(DISTINCT {$metriks[0]})"), 'desc');
-            } else {
+                foreach ($metriks as $metriksColumn) {
+                    // Ambil nama kolom dan jenis agregasi
+                    $columnParts = explode('|', $metriksColumn);
+                    $columnName = $columnParts[0]; // Kolom yang digunakan
+                    $aggregationType = isset($columnParts[1]) ? strtoupper($columnParts[1]) : 'COUNT'; // Tipe agregasi default COUNT
+
+                    // Hilangkan nama tabel dari alias
+                    $columnAlias = last(explode('.', $columnName)); // Ambil nama kolom saja, hilangkan nama tabel
+
+                    // Tentukan jenis agregasi (COUNT, SUM, AVERAGE)
+                    switch ($aggregationType) {
+                        case 'SUM':
+                            $query->addSelect(DB::raw("SUM({$columnName}) AS total_{$columnAlias}"));
+                            break;
+                        case 'AVERAGE':
+                            $query->addSelect(DB::raw("AVG({$columnName}) AS avg_{$columnAlias}"));
+                            break;
+                        case 'COUNT':
+                        default:
+                            $query->addSelect(DB::raw("COUNT(DISTINCT {$columnName}) AS total_{$columnAlias}"));
+                            break;
+                    }
+                }
+            }
+
+            // Group by dimensi hanya jika dimensi ada
+            if (!empty($dimensi)) {
+                $query->groupBy($dimensi);
+            }
+
+            // Order by dimensi atau metriks (perbaiki bagian orderBy)
+            if (!empty($metriks)) {
+                // Ambil kolom pertama dari metriks dan identifikasi agregasi untuk sorting
+                $metriksParts = explode('|', $metriks[0]);
+                $metriksColumn = $metriksParts[0];
+                $aggregationType = isset($metriksParts[1]) ? strtoupper($metriksParts[1]) : 'COUNT';
+
+                // Tentukan agregasi yang benar untuk orderBy
+                switch ($aggregationType) {
+                    case 'SUM':
+                        $query->orderBy(DB::raw("SUM({$metriksColumn})"), 'desc');
+                        break;
+                    case 'AVERAGE':
+                        $query->orderBy(DB::raw("AVG({$metriksColumn})"), 'desc');
+                        break;
+                    case 'COUNT':
+                    default:
+                        $query->orderBy(DB::raw("COUNT(DISTINCT {$metriksColumn})"), 'desc');
+                        break;
+                }
+            } elseif (!empty($dimensi)) {
+                // Jika tidak ada metriks, defaultnya berdasarkan dimensi
                 $query->orderBy($dimensi[0], 'asc');
             }
 
@@ -324,6 +275,7 @@ class ApiGetDataController extends Controller
             ], 500);
         }
     }
+
 
 
     private function getForeignKey($table, $joinTable)
