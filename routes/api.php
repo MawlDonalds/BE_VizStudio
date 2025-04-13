@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\ApiConnectDatabaseController;
 use App\Http\Controllers\Api\ApiGetDataController;
+use App\Http\Controllers\Api\ApiVisualizationController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -25,4 +26,8 @@ Route::prefix('kelola-dashboard')->group(function () {
 
     Route::post('/check-foreign-key', [ApiConnectDatabaseController::class, 'checkIfForeignKey']);
     // Route::post('/table-data', [ApiGetDataController::class, 'getTableDataByColumns']);
+    Route::post('/visualisasi-data', [ApiGetDataController::class, 'getVisualisasiData']);
+    Route::post('/convert-sql', [ApiVisualizationController::class, 'convertSql']);
 });
+
+

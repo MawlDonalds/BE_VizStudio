@@ -543,4 +543,64 @@ class ApiGetDataController extends Controller
             return '';
         }
     }
+
+    public function getVisualisasiData(Request $request)
+    {
+        try {
+            $idDatasource = 1;
+            $dbConfig = $this->getConnectionDetails($idDatasource);
+            config(["database.connections.dynamic" => $dbConfig]);
+            $connection = DB::connection('dynamic');
+
+            $table = $request->input('tabel');
+            $dimensi = $request->input('dimensi', []);
+            $metriks = $request->input('metriks', []);
+            $tabelJoin = $request->input('tabel_join', []);
+            $filters = $request->input('filters', []);
+
+            $query = $connection->table($table);
+            $previousTable = $table;
+
+            foreach ($tabelJoin as $join) {
+                $joinTable = $join['tabel'];
+                $joinType = strtoupper($join['join_type']);
+                $foreignKey = $this->getForeignKey($previousTable, $joinTable);
+
+                if ($foreignKey) {
+                    $query->join(
+                        $joinTable,
+                        "{$previousTable}.{$foreignKey->foreign_column}",
+                        '=',
+                        "{$joinTable}.{$foreignKey->referenced_column}",
+                        $joinType
+                    );
+                }
+                $previousTable = $joinTable;
+            }
+
+            $query->select(DB::raw(implode(', ', $dimensi)));
+            foreach ($metriks as $metriksColumn) {
+                $columnName = last(explode('.', $metriksColumn));
+                $query->addSelect(DB::raw("COUNT(DISTINCT {$metriksColumn}) AS total_{$columnName}"));
+            }
+
+            $query->groupBy($dimensi);
+            $query = $this->applyFilters($query, $filters);
+
+            $data = $query->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+                'labels' => $dimensi,
+                'series' => $metriks,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error visualisasi data',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 }
