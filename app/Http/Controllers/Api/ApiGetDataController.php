@@ -496,6 +496,66 @@ class ApiGetDataController extends Controller
         }
     }
 
+    // public function getVisualisasiData(Request $request)
+    // {
+    //     try {
+    //         $idDatasource = 1;
+    //         $dbConfig = $this->getConnectionDetails($idDatasource);
+    //         config(["database.connections.dynamic" => $dbConfig]);
+    //         $connection = DB::connection('dynamic');
+
+    //         $table = $request->input('tabel');
+    //         $dimensi = $request->input('dimensi', []);
+    //         $metriks = $request->input('metriks', []);
+    //         $tabelJoin = $request->input('tabel_join', []);
+    //         $filters = $request->input('filters', []);
+
+    //         $query = $connection->table($table);
+    //         $previousTable = $table;
+
+    //         foreach ($tabelJoin as $join) {
+    //             $joinTable = $join['tabel'];
+    //             $joinType = strtoupper($join['join_type']);
+    //             $foreignKey = $this->getForeignKey($previousTable, $joinTable);
+
+    //             if ($foreignKey) {
+    //                 $query->join(
+    //                     $joinTable,
+    //                     "{$previousTable}.{$foreignKey->foreign_column}",
+    //                     '=',
+    //                     "{$joinTable}.{$foreignKey->referenced_column}",
+    //                     $joinType
+    //                 );
+    //             }
+    //             $previousTable = $joinTable;
+    //         }
+
+    //         $query->select(DB::raw(implode(', ', $dimensi)));
+    //         foreach ($metriks as $metriksColumn) {
+    //             $columnName = last(explode('.', $metriksColumn));
+    //             $query->addSelect(DB::raw("COUNT(DISTINCT {$metriksColumn}) AS total_{$columnName}"));
+    //         }
+
+    //         $query->groupBy($dimensi);
+    //         $query = $this->applyFilters($query, $filters);
+
+    //         $data = $query->get();
+
+    //         return response()->json([
+    //             'success' => true,
+    //             'data' => $data,
+    //             'labels' => $dimensi,
+    //             'series' => $metriks,
+    //         ]);
+    //     } catch (\Exception $e) {
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'Error visualisasi data',
+    //             'error' => $e->getMessage()
+    //         ], 500);
+    //     }
+    // }
+
     public function getVisualisasiData(Request $request)
     {
         try {
@@ -504,53 +564,79 @@ class ApiGetDataController extends Controller
             config(["database.connections.dynamic" => $dbConfig]);
             $connection = DB::connection('dynamic');
 
-            $table = $request->input('tabel');
-            $dimensi = $request->input('dimensi', []);
-            $metriks = $request->input('metriks', []);
-            $tabelJoin = $request->input('tabel_join', []);
-            $filters = $request->input('filters', []);
+            $rawQuery = $request->input('query');
 
-            $query = $connection->table($table);
-            $previousTable = $table;
+            if (!$rawQuery) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Query tidak ditemukan.'
+                ], 400);
+            }
 
-            foreach ($tabelJoin as $join) {
-                $joinTable = $join['tabel'];
-                $joinType = strtoupper($join['join_type']);
-                $foreignKey = $this->getForeignKey($previousTable, $joinTable);
+            if (!str_starts_with(strtolower(trim($rawQuery)), 'select')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Hanya query SELECT yang diperbolehkan.'
+                ], 403);
+            }
 
-                if ($foreignKey) {
-                    $query->join(
-                        $joinTable,
-                        "{$previousTable}.{$foreignKey->foreign_column}",
-                        '=',
-                        "{$joinTable}.{$foreignKey->referenced_column}",
-                        $joinType
-                    );
+            $rawResults = $connection->select($rawQuery);
+
+            if (empty($rawResults)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => []
+                ]);
+            }
+
+            // Ambil nama kolom pertama sebagai label (kategori)
+            $firstRow = (array)$rawResults[0];
+            $labelKey = array_key_first($firstRow);
+
+            // Format dan normalisasi data
+            $formattedData = collect($rawResults)->map(function ($row) use ($labelKey) {
+                $formattedRow = [];
+
+                foreach ((array) $row as $key => $value) {
+                    if ($key === $labelKey) {
+                        // Normalisasi nilai label (kolom pertama)
+                        $formattedRow[$key] = empty(trim($value)) || strtolower(trim($value)) === 'null'
+                            ? 'Tidak diketahui'
+                            : $value;
+                    } else {
+                        // Normalisasi nilai numerik
+                        $formattedRow[$key] = is_null($value) || $value === '' || $value === 'null'
+                            ? 0
+                            : (is_numeric($value) ? $value : 0);
+                    }
                 }
-                $previousTable = $joinTable;
-            }
 
-            $query->select(DB::raw(implode(', ', $dimensi)));
-            foreach ($metriks as $metriksColumn) {
-                $columnName = last(explode('.', $metriksColumn));
-                $query->addSelect(DB::raw("COUNT(DISTINCT {$metriksColumn}) AS total_{$columnName}"));
-            }
+                return $formattedRow;
+            });
 
-            $query->groupBy($dimensi);
-            $query = $this->applyFilters($query, $filters);
+            // Gabungkan label yang sama (misalnya: “Tidak diketahui” muncul lebih dari 1x)
+            $grouped = $formattedData->groupBy($labelKey)->map(function ($items) use ($labelKey) {
+                return $items->reduce(function ($carry, $item) use ($labelKey) {
+                    if (!$carry) return $item;
 
-            $data = $query->get();
+                    foreach ($item as $key => $value) {
+                        if ($key !== $labelKey && is_numeric($value)) {
+                            $carry[$key] += $value;
+                        }
+                    }
+
+                    return $carry;
+                });
+            })->values(); // reset index
 
             return response()->json([
                 'success' => true,
-                'data' => $data,
-                'labels' => $dimensi,
-                'series' => $metriks,
+                'data' => $grouped
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error visualisasi data',
+                'message' => 'Error menjalankan query.',
                 'error' => $e->getMessage()
             ], 500);
         }
