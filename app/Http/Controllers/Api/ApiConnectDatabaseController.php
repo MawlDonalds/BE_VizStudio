@@ -16,7 +16,6 @@ class ApiConnectDatabaseController extends Controller
         try {
             // Validasi input
             $request->validate([
-                'id_project' => 'required|integer',
                 'name' => 'required|string|max:255',
                 'type' => 'required|string|max:8',
                 'host' => 'required|string|max:255',
@@ -28,7 +27,7 @@ class ApiConnectDatabaseController extends Controller
 
             // Simpan koneksi ke database
             $datasource = Datasource::create([
-                'id_project'    => $request->id_project,
+                'id_project'    => 1,
                 'name'          => $request->name,
                 'type'          => strtolower($request->type),
                 'host'          => $request->host,
