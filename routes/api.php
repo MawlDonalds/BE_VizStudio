@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\ApiCanvasController;
 use App\Http\Controllers\Api\ApiConnectDatabaseController;
 use App\Http\Controllers\Api\ApiGetDataController;
 use App\Http\Controllers\Api\ApiVisualizationController;
@@ -28,6 +29,19 @@ Route::prefix('kelola-dashboard')->group(function () {
     // Route::post('/table-data', [ApiGetDataController::class, 'getTableDataByColumns']);
     Route::post('/visualisasi-data', [ApiGetDataController::class, 'getVisualisasiData']);
     Route::post('/convert-sql', [ApiVisualizationController::class, 'convertSql']);
+
+    // Route::post('/save-chart', [ApiGetDataController::class, 'saveChart']);
+    Route::get('/latest', [ApiCanvasController::class, 'getLatestVisualization']);
+
+    // Route::post('/visualisasi-data', [VisualisasiController::class, 'getData']);
+    
+    // New chart routes
+    Route::get('/visualizations', [ApiVisualizationController::class, 'getAllVisualizations']);
+    Route::get('/visualizations/{id}', [ApiVisualizationController::class, 'getVisualizationById']);
+    Route::post('/save-visualization', [ApiVisualizationController::class, 'saveVisualization']);
+    Route::put('/visualizations/{id}', [ApiVisualizationController::class, 'updateVisualization']);
+    Route::delete('/visualizations/{id}', [ApiVisualizationController::class, 'deleteVisualization']);
+
 });
 
 

@@ -11,18 +11,18 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('charts', function (Blueprint $table) {
-            $table->id('id_chart');
+        Schema::create('visualizations', function (Blueprint $table) {
+            $table->id('id_visualization');
             $table->unsignedBigInteger('id_canvas');
             $table->unsignedBigInteger('id_datasource');
             $table->string('name');
-            $table->string('chart_type');
+            $table->string('visualization_type');
             $table->text('query');
             $table->json('config');
-            $table->integer('width');
-            $table->integer('height');
-            $table->integer('position_x');
-            $table->integer('position_y');
+            $table->double('width');
+            $table->double('height');
+            $table->double('position_x');
+            $table->double('position_y');
             $table->string('created_by')->nullable();
             $table->timestamp('created_time')->nullable();
             $table->string('modified_by')->nullable();
@@ -39,6 +39,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('charts');
+        Schema::dropIfExists('visualizations');
     }
 };

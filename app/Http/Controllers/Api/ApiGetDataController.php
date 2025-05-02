@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Visualization;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
@@ -261,11 +263,14 @@ class ApiGetDataController extends Controller
             // Eksekusi query
             $data = $query->get();
 
+            // $savevisualization = $this->savevisualizationData($request, $sqlForDebug);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Data berhasil dihitung berdasarkan dimensi dan metriks.',
                 'data' => $data,
-                'query' => $sqlForDebug,  // Menambahkan query untuk debugging
+                'query' => $sqlForDebug,
+                // 'visualization_status' => $savevisualization,
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
@@ -495,6 +500,222 @@ class ApiGetDataController extends Controller
             return '';
         }
     }
+
+    public function saveVisualization(Request $request)
+{
+    try {
+        // Validate basic fields
+        $validated = $request->validate([
+            'id_canvas' => 'required|integer',
+            'id_datasource' => 'required|integer',
+            'name' => 'required|string',
+            'visualization_type' => 'required|string',
+            'query' => 'required|string',
+            'config' => 'nullable|array',
+            'width' => 'nullable',
+            'height' => 'nullable',
+            'position_x' => 'nullable',
+            'position_y' => 'nullable',
+        ]);
+
+        // Extract and prepare config data
+        $config = $request->input('config', []);
+
+        // Ensure all config values are properly captured
+        $visualizationConfig = [
+            'colors' => $config['colors'] ?? ['#4CAF50', '#FF9800', '#2196F3'],
+            'backgroundColor' => $config['backgroundColor'] ?? '#ffffff',
+            'title' => $config['title'] ?? $validated['name'],
+            'fontSize' => $config['fontSize'] ?? 14,
+            'fontFamily' => $config['fontFamily'] ?? 'Arial',
+            'fontColor' => $config['fontColor'] ?? '#333',
+            'gridColor' => $config['gridColor'] ?? '#E0E0E0',
+            'pattern' => $config['pattern'] ?? 'solid',
+            'titleFontSize' => $config['titleFontSize'] ?? 18,
+            'titleFontFamily' => $config['titleFontFamily'] ?? 'Arial',
+            'xAxisFontSize' => $config['xAxisFontSize'] ?? 12,
+            'xAxisFontFamily' => $config['xAxisFontFamily'] ?? 'Arial',
+            'yAxisFontSize' => $config['yAxisFontSize'] ?? 12,
+            'yAxisFontFamily' => $config['yAxisFontFamily'] ?? 'Arial',
+        ];
+
+        // If visualizationOptions exists in config, merge it with our visualizationConfig
+        if (isset($config['visualizationOptions']) && is_array($config['visualizationOptions'])) {
+            $visualizationConfig['visualizationOptions'] = $config['visualizationOptions'];
+        }
+
+        // Try to find existing visualization first by canvas ID and query
+        $visualization = Visualization::where('id_canvas', $validated['id_canvas'])
+            ->where('query', $validated['query'])
+            ->first();
+
+        // Check if this is a position/size update only
+        $isPositionUpdate = $request->has('position_x') || $request->has('position_y') || 
+                            $request->has('width') || $request->has('height');
+
+        if ($visualization) {
+            $updateData = [
+                'modified_by' => 1, // Replace with auth user ID
+                'modified_time' => now(),
+            ];
+            
+            // Only update these fields if explicitly provided
+            if ($request->has('id_datasource')) {
+                $updateData['id_datasource'] = $validated['id_datasource'];
+            }
+            
+            if ($request->has('name')) {
+                $updateData['name'] = $validated['name'];
+            }
+            
+            if ($request->has('visualization_type')) {
+                $updateData['visualization_type'] = $validated['visualization_type'];
+            }
+            
+            // If this is not just a position update, update the config and query
+            if (!$isPositionUpdate) {
+                $updateData['config'] = $visualizationConfig;
+                $updateData['query'] = $validated['query'];
+            }
+            
+            // Always update position and size if provided
+            if ($request->has('width')) {
+                $updateData['width'] = $validated['width'];
+            }
+            
+            if ($request->has('height')) {
+                $updateData['height'] = $validated['height'];
+            }
+            
+            if ($request->has('position_x')) {
+                $updateData['position_x'] = $validated['position_x'];
+            }
+            
+            if ($request->has('position_y')) {
+                $updateData['position_y'] = $validated['position_y'];
+            }
+            
+            $visualization->update($updateData);
+            
+            // Log the operation type
+            $logMessage = $isPositionUpdate ? 
+                'visualization position/size updated' : 
+                'visualization fully updated';
+                
+            Log::info($logMessage, [
+                'visualization_id' => $visualization->id,
+                'name' => $visualization->name,
+                'position_x' => $visualization->position_x,
+                'position_y' => $visualization->position_y,
+                'width' => $visualization->width,
+                'height' => $visualization->height
+            ]);
+        } else {
+            // Create new visualization with all data
+            $visualization = Visualization::create([
+                'id_canvas' => $validated['id_canvas'],
+                'id_datasource' => $validated['id_datasource'],
+                'name' => $validated['name'],
+                'visualization_type' => $validated['visualization_type'],
+                'query' => $validated['query'],
+                'config' => $visualizationConfig,
+                'width' => $validated['width'] ?? 800,
+                'height' => $validated['height'] ?? 350,
+                'position_x' => $validated['position_x'] ?? 0,
+                'position_y' => $validated['position_y'] ?? 0,
+                'created_time' => now(),
+                'modified_time' => now(),
+                'created_by' => 1, // Replace with auth user ID
+                'modified_by' => 1, // Replace with auth user ID
+            ]);
+            
+            Log::info('New visualization created', [
+                'visualization_id' => $visualization->id,
+                'name' => $visualization->name,
+                'visualization_type' => $visualization->visualization_type
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Visualisasi berhasil disimpan',
+            'data' => $visualization
+        ], 200);
+    } catch (\Illuminate\Validation\ValidationException $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Validasi gagal',
+            'errors' => $e->errors()
+        ], 422);
+    } catch (\Exception $e) {
+        Log::error('Error saving visualization: ' . $e->getMessage(), [
+            'trace' => $e->getTraceAsString(),
+            'request' => $request->all()
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Terjadi kesalahan saat menyimpan visualization',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+    // Add this new API endpoint to your controller
+
+    /**
+     * Retrieve visualization position data
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getvisualizationPosition(Request $request)
+    {
+        try {
+            // Validate request
+            $validated = $request->validate([
+                'query' => 'required|string',
+                'visualization_type' => 'required|string',
+            ]);
+
+            // Find visualization by query and visualization type
+            $visualization = Visualization::where('query', $validated['query'])
+                ->where('visualization_type', $validated['visualization_type'])
+                ->first();
+
+            if (!$visualization) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Visualisasi tidak ditemukan'
+                ], 404);
+            }
+
+            // Return visualization position data
+            return response()->json([
+                'success' => true,
+                'message' => 'Data posisi visualization berhasil diambil',
+                'data' => [
+                    'width' => $visualization->width,
+                    'height' => $visualization->height,
+                    'position_x' => $visualization->position_x,
+                    'position_y' => $visualization->position_y
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error('Error retrieving visualization position: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'request' => $request->all()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengambil data posisi visualization',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+
 
     // public function getVisualisasiData(Request $request)
     // {

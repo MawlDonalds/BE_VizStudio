@@ -33,8 +33,8 @@ class Datasource extends Model
         return $this->belongsTo(Project::class, 'id_project');
     }
 
-    public function charts()
+    public function visualizations()
     {
-        return $this->hasMany(Chart::class, 'id_datasource');
+        return $this->hasMany(Visualization::class, 'id_datasource');
     }
 }

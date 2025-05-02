@@ -27,8 +27,8 @@ class Canvas extends Model
         return $this->belongsTo(Project::class, 'id_project');
     }
 
-    public function charts()
+    public function visuakizations()
     {
-        return $this->hasMany(Chart::class, 'id_canvas');
+        return $this->hasMany(Visualization::class, 'id_canvas');
     }
 }

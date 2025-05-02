@@ -5,18 +5,18 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Chart extends Model
+class Visualization extends Model
 {
     use HasFactory;
 
-    protected $table = 'chart';
-    protected $primaryKey = 'id_chart';
+    protected $table = 'visualizations';
+    protected $primaryKey = 'id_visualization';
     public $timestamps = false;
     protected $fillable = [
         'id_canvas',
-        'id_datasources',
+        'id_datasource',
         'name',
-        'chart_type',
+        'visualization_type',
         'query',
         'config',
         'width',
