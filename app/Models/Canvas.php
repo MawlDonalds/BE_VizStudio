@@ -9,7 +9,7 @@ class Canvas extends Model
 {
     use HasFactory;
 
-    protected $table = 'canvas';
+    protected $table = 'public.canvas';
     protected $primaryKey = 'id_canvas';
     public $timestamps = false;
     protected $fillable = [
@@ -27,7 +27,7 @@ class Canvas extends Model
         return $this->belongsTo(Project::class, 'id_project');
     }
 
-    public function visuakizations()
+    public function visualizations()
     {
         return $this->hasMany(Visualization::class, 'id_canvas');
     }
