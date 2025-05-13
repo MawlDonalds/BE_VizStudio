@@ -31,6 +31,19 @@ return [
 
     'connections' => [
 
+        'public' => [
+            'driver' => 'pgsql',
+            'host' => env('DB_HOST', '127.0.0.1'),
+            'port' => env('DB_PORT', '5432'),
+            'database' => env('DB_DATABASE', 'your_database_name'),  // Ganti dengan nama database Anda
+            'username' => env('DB_USERNAME', 'your_database_username'),  // Ganti dengan username Anda
+            'password' => env('DB_PASSWORD', 'your_database_password'),  // Ganti dengan password Anda
+            'charset' => 'utf8',
+            'prefix' => '',
+            'schema' => 'public',  // Menunjukkan schema 'public'
+            'sslmode' => 'prefer',
+        ],
+
         'sqlite' => [
             'driver' => 'sqlite',
             'url' => env('DB_URL'),
@@ -147,7 +160,7 @@ return [
 
         'options' => [
             'cluster' => env('REDIS_CLUSTER', 'redis'),
-            'prefix' => env('REDIS_PREFIX', Str::slug(env('APP_NAME', 'laravel'), '_').'_database_'),
+            'prefix' => env('REDIS_PREFIX', Str::slug(env('APP_NAME', 'laravel'), '_') . '_database_'),
         ],
 
         'default' => [

@@ -34,7 +34,7 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::get('/latest', [ApiCanvasController::class, 'getLatestVisualization']);
 
     // Route::post('/visualisasi-data', [VisualisasiController::class, 'getData']);
-    
+
     // New chart routes
     Route::get('/visualizations', [ApiVisualizationController::class, 'getAllVisualizations']);
     Route::get('/visualizations/{id}', [ApiVisualizationController::class, 'getVisualizationById']);
@@ -44,6 +44,7 @@ Route::prefix('kelola-dashboard')->group(function () {
 
     // Get Visualization
     Route::get('/get-visualizations', [ApiCanvasController::class, 'getAllVisualizations']);
+    Route::post('/canvas', [ApiCanvasController::class, 'createCanvas']);
+    Route::put('/canvas/{id_canvas}', [ApiCanvasController::class, 'updateCanvasName']);
+    Route::delete('/canvas/{id_canvas}', [ApiCanvasController::class, 'deleteCanvas']);
 });
-
-
