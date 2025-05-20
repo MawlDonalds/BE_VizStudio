@@ -40,8 +40,10 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::get('/visualizations/{id}', [ApiVisualizationController::class, 'getVisualizationById']);
     Route::post('/save-visualization', [ApiVisualizationController::class, 'saveVisualization']);
     Route::put('/visualizations/{id}', [ApiVisualizationController::class, 'updateVisualization']);
-    Route::delete('/visualizations/{id}', [ApiVisualizationController::class, 'deleteVisualization']);
+    Route::delete('/delete-visualization/{id}', [ApiVisualizationController::class, 'deleteVisualization']);
 
+    // Get Visualization
+    Route::get('/get-visualizations', [ApiCanvasController::class, 'getAllVisualizations']);
     Route::post('/canvas', [ApiCanvasController::class, 'createCanvas']);
     Route::put('/canvas/{id_canvas}', [ApiCanvasController::class, 'updateCanvas']);
     Route::delete('/canvas/{id_canvas}', [ApiCanvasController::class, 'deleteCanvas']);
