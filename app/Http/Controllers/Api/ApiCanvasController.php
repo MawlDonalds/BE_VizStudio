@@ -132,12 +132,12 @@ class ApiCanvasController extends Controller
         }
     }
 
-    public function updateCanvasName(Request $request, $id_canvas)
+    public function updateCanvas(Request $request, $id_canvas)
     {
         try {
             // Validasi input
             $validatedData = $request->validate([
-                'name' => 'required|string|max:255',  // Validasi nama canvas
+                'name' => 'required|string|max:255',
             ]);
 
             // Cari canvas berdasarkan id_canvas

@@ -43,6 +43,6 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::delete('/visualizations/{id}', [ApiVisualizationController::class, 'deleteVisualization']);
 
     Route::post('/canvas', [ApiCanvasController::class, 'createCanvas']);
-    Route::put('/canvas/{id_canvas}', [ApiCanvasController::class, 'updateCanvasName']);
+    Route::put('/canvas/{id_canvas}', [ApiCanvasController::class, 'updateCanvas']);
     Route::delete('/canvas/{id_canvas}', [ApiCanvasController::class, 'deleteCanvas']);
 });
