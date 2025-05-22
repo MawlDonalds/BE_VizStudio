@@ -778,88 +778,74 @@ class ApiGetDataController extends Controller
     // }
 
     public function getVisualisasiData(Request $request)
-    {
-        try {
-            $idDatasource = 1;
-            $dbConfig = $this->getConnectionDetails($idDatasource);
-            config(["database.connections.dynamic" => $dbConfig]);
-            $connection = DB::connection('dynamic');
+{
+    try {
+        // Ambil query dari input JSON
+        $query = $request->input('query');
 
-            $rawQuery = $request->input('query');
-
-            if (!$rawQuery) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Query tidak ditemukan.'
-                ], 400);
-            }
-
-            if (!str_starts_with(strtolower(trim($rawQuery)), 'select')) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Hanya query SELECT yang diperbolehkan.'
-                ], 403);
-            }
-
-            $rawResults = $connection->select($rawQuery);
-
-            if (empty($rawResults)) {
-                return response()->json([
-                    'success' => true,
-                    'data' => []
-                ]);
-            }
-
-            // Ambil nama kolom pertama sebagai label (kategori)
-            $firstRow = (array)$rawResults[0];
-            $labelKey = array_key_first($firstRow);
-
-            // Format dan normalisasi data
-            $formattedData = collect($rawResults)->map(function ($row) use ($labelKey) {
-                $formattedRow = [];
-
-                foreach ((array) $row as $key => $value) {
-                    if ($key === $labelKey) {
-                        // Normalisasi nilai label (kolom pertama)
-                        $formattedRow[$key] = empty(trim($value)) || strtolower(trim($value)) === 'null'
-                            ? 'Tidak diketahui'
-                            : $value;
-                    } else {
-                        // Normalisasi nilai numerik
-                        $formattedRow[$key] = is_null($value) || $value === '' || $value === 'null'
-                            ? 0
-                            : (is_numeric($value) ? $value : 0);
-                    }
-                }
-
-                return $formattedRow;
-            });
-
-            // Gabungkan label yang sama (misalnya: “Tidak diketahui” muncul lebih dari 1x)
-            $grouped = $formattedData->groupBy($labelKey)->map(function ($items) use ($labelKey) {
-                return $items->reduce(function ($carry, $item) use ($labelKey) {
-                    if (!$carry) return $item;
-
-                    foreach ($item as $key => $value) {
-                        if ($key !== $labelKey && is_numeric($value)) {
-                            $carry[$key] += $value;
-                        }
-                    }
-
-                    return $carry;
-                });
-            })->values(); // reset index
-
-            return response()->json([
-                'success' => true,
-                'data' => $grouped
-            ]);
-        } catch (\Exception $e) {
+        // Validasi query untuk memastikan tidak kosong
+        if (empty($query)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error menjalankan query.',
-                'error' => $e->getMessage()
-            ], 500);
+                'message' => 'Query SQL tidak boleh kosong.',
+            ], 400);
         }
+
+        // Ambil koneksi database dari datasources (hardcoded untuk ID 1)
+        $idDatasource = 1;
+        $dbConfig = $this->getConnectionDetails($idDatasource);
+
+        // Buat koneksi on-the-fly menggunakan konfigurasi yang sudah diambil
+        config(["database.connections.dynamic" => $dbConfig]);
+        $connection = DB::connection('dynamic');
+
+        // Menjalankan query SQL yang diberikan
+        $rawResults = $connection->select($query);
+
+        if (empty($rawResults)) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Query berhasil dijalankan, namun tidak ada data.',
+                'data' => [],
+            ], 200);
+        }
+
+        // Ambil kolom pertama sebagai label
+        $firstRow = (array)$rawResults[0];
+        $labelKey = array_key_first($firstRow);
+
+        // Format dan normalisasi hasil seperti getVisualisasiData, tapi tanpa groupBy
+        $formattedData = collect($rawResults)->map(function ($row) use ($labelKey) {
+            $formattedRow = [];
+
+            foreach ((array) $row as $key => $value) {
+                if ($key === $labelKey) {
+                    $formattedRow[$key] = empty(trim($value)) || strtolower(trim($value)) === 'null'
+                        ? 'Tidak diketahui'
+                        : $value;
+                } else {
+                    $formattedRow[$key] = is_null($value) || $value === '' || $value === 'null'
+                        ? 0
+                        : (is_numeric($value) ? $value : 0);
+                }
+            }
+
+            return $formattedRow;
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Query berhasil dijalankan.',
+            'data' => $formattedData,
+        ], 200);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Terjadi kesalahan saat menjalankan query.',
+            'error' => $e->getMessage(),
+        ], 500);
     }
+}
+
+
 }

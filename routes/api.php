@@ -18,9 +18,9 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::get('/columns/{table}', [ApiGetDataController::class, 'getTableColumns']);
     Route::post('/execute-query', [ApiGetDataController::class, 'executeQuery']);
 
-    Route::post('/fetch-database', [ApiConnectDatabaseController::class, 'connectDB']);
+    Route::post('/fetch-database', [ApiConnectDatabaseController::class, 'connectDatasource']);
     Route::get('/fetch-table/{id}', [ApiConnectDatabaseController::class, 'fetchTables']);
-    Route::get('/fetch-column/{table}', [ApiConnectDatabaseController::class, 'getTableColumns']);
+    Route::get('/fetch-column/{table}', [ApiConnectDatabaseController::class, 'fetchTableColumns']);
     // Route::post('/fetch-data/{table}', [ApiConnectDatabaseController::class, 'getTableDataByColumns']);
 
     Route::post('/fetch-data', [ApiGetDataController::class, 'getTableDataByColumns']);

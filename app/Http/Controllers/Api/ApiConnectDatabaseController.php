@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Log;
 
 class ApiConnectDatabaseController extends Controller
 {
-    public function connectDB(Request $request)
+    public function connectDatasource(Request $request)
     {
         try {
             // Validasi input
@@ -149,7 +149,7 @@ class ApiConnectDatabaseController extends Controller
         ];
     }
 
-    public function getTableColumns($table)
+    public function fetchTableColumns($table)
     {
         try {
             // Ambil koneksi database dari datasources
