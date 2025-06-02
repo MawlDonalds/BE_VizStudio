@@ -32,11 +32,112 @@ class ApiCanvasController extends Controller
     //         ], 500);
     //     }
     // }
-    public function getAllVisualizations(Request $request)
+    // public function getAllVisualizations(Request $request)
+    // {
+    //     try {
+    //         // Get all non-deleted visualizations
+    //         $visualizations = Visualization::where('is_deleted', 0)
+    //             ->orderBy('created_time', 'desc')
+    //             ->get();
+
+    //         // Process each visualization to execute its query and update config
+    //         foreach ($visualizations as $visualization) {
+    //             // Execute the query
+    //             try {
+    //                 $queryResults = DB::select($visualization->query);
+
+    //                 // Convert results to appropriate format based on visualization type
+    //                 $formattedData = $this->formatDataForVisualization($queryResults, $visualization->visualization_type);
+
+    //                 // Get a copy of the config array
+    //                 $config = is_array($visualization->config) ? $visualization->config : [];
+
+    //                 // Update visualization-type specific data in config
+    //                 switch ($visualization->visualization_type) {
+    //                     case 'pie':
+    //                         if (!isset($config['visualizationOptions'])) {
+    //                             $config['visualizationOptions'] = [];
+    //                         }
+    //                         $config['visualizationOptions']['labels'] = array_column($formattedData, 'label');
+    //                         $config['visualizationOptions']['series'] = array_column($formattedData, 'value');
+    //                         break;
+
+    //                     case 'bar':
+    //                     case 'line':
+    //                     case 'area':
+    //                         if (!isset($config['visualizationOptions'])) {
+    //                             $config['visualizationOptions'] = [];
+    //                         }
+    //                         if (!isset($config['visualizationOptions']['series'])) {
+    //                             $config['visualizationOptions']['series'] = [];
+    //                         }
+    //                         if (!isset($config['visualizationOptions']['xaxis'])) {
+    //                             $config['visualizationOptions']['xaxis'] = [];
+    //                         }
+
+    //                         // Determine categories and series from formatted data
+    //                         $categories = array_column($formattedData, 'x');
+    //                         $seriesData = array_column($formattedData, 'y');
+
+    //                         $config['visualizationOptions']['xaxis']['categories'] = $categories;
+    //                         $config['visualizationOptions']['series'] = [
+    //                             [
+    //                                 'name' => $visualization->name,
+    //                                 'data' => $seriesData
+    //                             ]
+    //                         ];
+    //                         break;
+
+    //                     default:
+    //                         // Generic data update
+    //                         if (!isset($config['visualizationOptions'])) {
+    //                             $config['visualizationOptions'] = [];
+    //                         }
+    //                         $config['visualizationOptions']['data'] = $formattedData;
+    //                 }
+
+    //                 // Update the latest data timestamp
+    //                 $config['lastDataUpdate'] = Carbon::now()->format('Y-m-d H:i:s');
+
+    //                 // Assign the updated config back to the visualization properly
+    //                 $visualization->config = $config;
+    //             } catch (\Exception $queryException) {
+    //                 // Get a copy of the config array
+    //                 $config = is_array($visualization->config) ? $visualization->config : [];
+
+    //                 // If query execution fails, add error info to config
+    //                 $config['queryError'] = $queryException->getMessage();
+    //                 $config['lastQueryAttempt'] = Carbon::now()->format('Y-m-d H:i:s');
+
+    //                 // Assign the updated config back to the visualization
+    //                 $visualization->config = $config;
+    //             }
+    //         }
+
+    //         // Save the updated configurations before returning the data
+    //         foreach ($visualizations as $visualization) {
+    //             $visualization->save();
+    //         }
+
+    //         return response()->json([
+    //             'status' => 'success',
+    //             'message' => 'Visualizations retrieved successfully with updated data',
+    //             'data' => $visualizations
+    //         ]);
+    //     } catch (\Exception $e) {
+    //         return response()->json([
+    //             'status' => 'error',
+    //             'message' => 'Failed to retrieve visualizations: ' . $e->getMessage()
+    //         ], 500);
+    //     }
+    // }
+
+    public function getAllVisualizations(Request $request, $id_canvas)
     {
         try {
-            // Get all non-deleted visualizations
+            // Get all non-deleted visualizations for the specific canvas ID
             $visualizations = Visualization::where('is_deleted', 0)
+                ->where('id_canvas', $id_canvas) // Filter based on id_canvas
                 ->orderBy('created_time', 'desc')
                 ->get();
 
@@ -132,6 +233,90 @@ class ApiCanvasController extends Controller
         }
     }
 
+
+    public function getCanvas(Request $request, $id_canvas)
+    {
+        try {
+            // Retrieve the canvas with the given ID along with its related visualizations
+            $canvas = Canvas::with('visualizations')->find($id_canvas);
+
+            if (!$canvas) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Canvas with this ID not found.',
+                ], 404);
+            }
+
+            // Prepare the response
+            $canvasData = [
+                'name' => $canvas->name,
+                'visualizations' => $canvas->visualizations, // Includes all visualizations of the canvas
+            ];
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Canvas retrieved successfully.',
+                'canvas' => $canvasData
+            ], 200);
+        } catch (\Exception $e) {
+            // Handle any exceptions that occur
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve canvas: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getCanvasByProject(Request $request)
+    {
+        try {
+            // Mencari canvas berdasarkan id_project = 1 secara statis
+            $id_project = 1; // ID Project statis
+            $canvases = Canvas::where('id_project', $id_project)
+                ->where('is_deleted', false) // Menyaring canvas yang tidak dihapus
+                ->get();
+
+            // Cek apakah canvas ditemukan
+            if ($canvases->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Canvas dengan ID Project tersebut tidak ditemukan.',
+                ], 404);
+            }
+
+            // Mengambil total canvas
+            $totalCanvases = $canvases->count();
+
+            // Mempersiapkan response
+            $canvasData = $canvases->map(function ($canvas) {
+                return [
+                    'id' => $canvas->id_canvas,
+                    'name' => $canvas->name,
+                    'created_by' => $canvas->created_by,
+                    'created_time' => $canvas->created_time,
+                    'modified_by' => $canvas->modified_by,
+                    'modified_time' => $canvas->modified_time,
+                    // 'visualizations' => $canvas->visualizations, // Menampilkan visualisasi terkait dengan canvas
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Canvas berdasarkan ID Project berhasil ditemukan.',
+                'canvases' => $canvasData,
+                'total_canvases' => $totalCanvases, // Menyertakan jumlah total canvas
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil data canvas: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+
+
+
     public function createCanvas(Request $request)
     {
         try {
@@ -226,8 +411,13 @@ class ApiCanvasController extends Controller
                 ], 404);
             }
 
-            // Hapus canvas
-            $canvas->delete();
+            // Tandai canvas sebagai deleted (soft delete)
+            $canvas->is_deleted = true;  // Set is_deleted field to true
+            $canvas->modified_by = request()->user() ? request()->user()->name : 'admin'; // Optional: Store the user who made the change
+            $canvas->modified_time = now();  // Optional: Store the time of the update
+
+            // Simpan perubahan ke database
+            $canvas->save();
 
             return response()->json([
                 'success' => true,
@@ -241,6 +431,7 @@ class ApiCanvasController extends Controller
             ], 500);
         }
     }
+
 
     /**
      * Format database results for different visualization types

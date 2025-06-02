@@ -36,16 +36,18 @@ Route::prefix('kelola-dashboard')->group(function () {
 
     // Route::post('/visualisasi-data', [VisualisasiController::class, 'getData']);
 
-    // New chart routes
-    Route::get('/visualizations', [ApiVisualizationController::class, 'getAllVisualizations']);
+    // Route::get('/visualizations', [ApiVisualizationController::class, 'getAllVisualizations']);
     Route::get('/visualizations/{id}', [ApiVisualizationController::class, 'getVisualizationById']);
     Route::post('/save-visualization', [ApiVisualizationController::class, 'saveVisualization']);
     Route::put('/visualizations/{id}', [ApiVisualizationController::class, 'updateVisualization']);
     Route::delete('/delete-visualization/{id}', [ApiVisualizationController::class, 'deleteVisualization']);
 
     // Get Visualization
-    Route::get('/get-visualizations', [ApiCanvasController::class, 'getAllVisualizations']);
+    // Route::get('/get-visualizations', [ApiCanvasController::class, 'getAllVisualizations']);
+    Route::get('/canvas/{id_canvas}/visualizations', [ApiCanvasController::class, 'getAllVisualizations']);
     Route::post('/canvas', [ApiCanvasController::class, 'createCanvas']);
-    Route::put('/canvas/{id_canvas}', [ApiCanvasController::class, 'updateCanvas']);
-    Route::delete('/canvas/{id_canvas}', [ApiCanvasController::class, 'deleteCanvas']);
+    Route::put('/canvas/update/{id_canvas}', [ApiCanvasController::class, 'updateCanvas']);
+    Route::put('/canvas/delete/{id_canvas}', [ApiCanvasController::class, 'deleteCanvas']);
+    Route::get('/canvas/{id_canvas}', [ApiCanvasController::class, 'getCanvas']);
+    Route::get('/project/{id_project}/canvases', [ApiCanvasController::class, 'getCanvasByProject']);
 });
