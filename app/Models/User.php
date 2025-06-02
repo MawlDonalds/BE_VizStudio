@@ -6,11 +6,13 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Hash;
+use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasFactory, Notifiable;
+    use HasFactory, Notifiable, HasApiTokens;
 
     protected $table = "users";
     protected $primaryKey = "id_user";
@@ -50,9 +52,32 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'created_time' => 'datetime',
+            'modified_time' => 'datetime',
+            'is_deleted' => 'boolean',
         ];
+    }
+
+    public static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($model) {
+            $model->created_by = $model->email;
+            $model->modified_by = $model->email;
+            $model->created_time = now();
+            $model->modified_time = now();
+        });
+
+        static::updating(function ($model){
+            $model->modified_time = now();
+        });
+    }
+
+    public function scopeNotDeleted($query)
+    {
+        return $query->where('is_deleted', false);
     }
 
     public function projects()
