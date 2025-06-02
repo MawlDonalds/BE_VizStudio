@@ -457,6 +457,74 @@ class ApiGetDataController extends Controller
         }
     }
 
+    public function checkDateColumn(Request $request)
+    {
+        try {
+            $request->validate([
+                'tabel' => 'required|string',
+                'kolom' => 'required|string',
+            ]);
+
+            $table = $request->input('tabel');
+            $column = $request->input('kolom');
+
+            // Ambil koneksi dari datasource (contoh: datasource ID 1)
+            $idDatasource = 1;
+            $dbConfig = $this->getConnectionDetails($idDatasource);
+
+            // Set koneksi dinamis
+            config(['database.connections.dynamic' => $dbConfig]);
+            $connection = DB::connection('dynamic');
+
+            // Cek apakah tabel ada
+            $tableExists = $connection->select("
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = ?
+            ", [$table]);
+
+            if (empty($tableExists)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Tabel '{$table}' tidak ditemukan.",
+                ], 404);
+            }
+
+            // Cek semua kolom di tabel
+            $columns = $connection->select("
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_name = ?
+            ", [$table]);
+
+            $dateColumns = [];
+
+            foreach ($columns as $col) {
+                $colName = $col->column_name;
+                $dataType = strtolower($col->data_type);
+
+                if (
+                    $colName !== $column &&
+                    in_array($dataType, ['date', 'timestamp', 'timestamp without time zone', 'timestamp with time zone'])
+                ) {
+                    $dateColumns[] = $colName;
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'has_date_column' => count($dateColumns) > 0,
+                'date_columns' => $dateColumns
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat memeriksa kolom tanggal.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
 
     /**
      * Membuat WHERE clause untuk debugging query SQL
