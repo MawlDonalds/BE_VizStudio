@@ -432,6 +432,34 @@ class ApiCanvasController extends Controller
         }
     }
 
+    public function getFirstCanvas()
+    {
+        try {
+            $canvas = Canvas::where('is_deleted', false)->first();
+
+            if (!$canvas) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Canvas tidak ditemukan.',
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Canvas berhasil ditemukan.',
+                'data' => $canvas
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil canvas.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+
+
 
     /**
      * Format database results for different visualization types

@@ -56,4 +56,5 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::put('/canvas/delete/{id_canvas}', [ApiCanvasController::class, 'deleteCanvas']);
     Route::get('/canvas/{id_canvas}', [ApiCanvasController::class, 'getCanvas']);
     Route::get('/project/{id_project}/canvases', [ApiCanvasController::class, 'getCanvasByProject']);
+    Route::get('/first-canvas', [ApiCanvasController::class, 'getFirstCanvas']);
 });
