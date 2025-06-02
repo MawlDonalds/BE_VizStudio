@@ -424,12 +424,13 @@ class ApiVisualizationController extends Controller
 
             $userId = 1; // Default to 1 if not authenticated
 
+            $visualization->delete();
             // Soft delete
-            $visualization->update([
-                'is_deleted' => 1,
-                'modified_by' => $userId,
-                'modified_time' => now()
-            ]);
+            // $visualization->update([
+            //     'is_deleted' => 1,
+            //     'modified_by' => $userId,
+            //     'modified_time' => now()
+            // ]);
 
             return response()->json([
                 'status' => 'success',
