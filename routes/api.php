@@ -12,11 +12,10 @@ Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 
-Route::middleware('auth:sanctum')->group(function () {
-    Route::post('/otentikasi/register', [ApiOtentikasiController::class, 'registerUser']);
-    Route::post('/otentikasi/login', [ApiOtentikasiController::class, 'loginUser']);
-    Route::post('/otentikasi/logout', [ApiOtentikasiController::class, 'logoutUser']);
-    Route::get('/otentikasi/profile', [ApiOtentikasiController::class, 'getUserProfile']);
+Route::prefix('otentikasi')->group(function () {
+    Route::post('/register', [ApiOtentikasiController::class, 'registerUser']);
+    Route::post('/login', [ApiOtentikasiController::class, 'loginUser']);
+    Route::post('/logout', [ApiOtentikasiController::class, 'logoutUser']);
 });
 
 Route::prefix('kelola-dashboard')->group(function () {
@@ -58,5 +57,4 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::put('/canvas/delete/{id_canvas}', [ApiCanvasController::class, 'deleteCanvas']);
     Route::get('/canvas/{id_canvas}', [ApiCanvasController::class, 'getCanvas']);
     Route::get('/project/{id_project}/canvases', [ApiCanvasController::class, 'getCanvasByProject']);
-    Route::get('/first-canvas', [ApiCanvasController::class, 'getFirstCanvas']);
 });
