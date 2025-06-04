@@ -273,7 +273,8 @@ class ApiCanvasController extends Controller
             // Mencari canvas berdasarkan id_project = 1 secara statis
             $id_project = 1; // ID Project statis
             $canvases = Canvas::where('id_project', $id_project)
-                ->where('is_deleted', false) // Menyaring canvas yang tidak dihapus
+                ->where('is_deleted', false)
+                ->orderBy('id_canvas', 'asc') // Menyaring canvas yang tidak dihapus
                 ->get();
 
             // Cek apakah canvas ditemukan
