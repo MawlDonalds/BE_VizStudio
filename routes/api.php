@@ -12,9 +12,11 @@ Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 
-Route::prefix('otentikasi')->group(function () {
-    Route::post('/register', [ApiOtentikasiController::class, 'registerUser']);
-    Route::post('/login', [ApiOtentikasiController::class, 'loginUser']);
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/otentikasi/register', [ApiOtentikasiController::class, 'registerUser']);
+    Route::post('/otentikasi/login', [ApiOtentikasiController::class, 'loginUser']);
+    Route::post('/otentikasi/logout', [ApiOtentikasiController::class, 'logoutUser']);
+    Route::get('/otentikasi/profile', [ApiOtentikasiController::class, 'getUserProfile']);
 });
 
 Route::prefix('kelola-dashboard')->group(function () {

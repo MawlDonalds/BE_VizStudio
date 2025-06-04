@@ -88,6 +88,7 @@ class ApiOtentikasiController extends Controller
                 ], 401);
             }
 
+            $user->tokens()->delete();
             $token = $user->createToken('auth_token')->plainTextToken;
 
             return response()->json([
@@ -107,6 +108,34 @@ class ApiOtentikasiController extends Controller
             return response()->json([
                     'success' => false,
                     'message' => 'Login gagal, silahkan coba lagi ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function logoutUser (Request $request)
+    {
+        try {
+            $user = $request->user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User tidak ditemukan'
+                ], 401);
+            }
+
+            // Delete current access token
+            $request->user()->currentAccessToken()->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Logout berhasil dilakukan'
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Logout gagal',
+                'error' => $e->getMessage()
             ], 500);
         }
     }
