@@ -273,7 +273,8 @@ class ApiCanvasController extends Controller
             // Mencari canvas berdasarkan id_project = 1 secara statis
             $id_project = 1; // ID Project statis
             $canvases = Canvas::where('id_project', $id_project)
-                ->where('is_deleted', false) // Menyaring canvas yang tidak dihapus
+                ->where('is_deleted', false)
+                ->orderBy('id_canvas', 'asc') // Menyaring canvas yang tidak dihapus
                 ->get();
 
             // Cek apakah canvas ditemukan
@@ -431,6 +432,34 @@ class ApiCanvasController extends Controller
             ], 500);
         }
     }
+
+    public function getFirstCanvas()
+    {
+        try {
+            $canvas = Canvas::where('is_deleted', false)->first();
+
+            if (!$canvas) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Canvas tidak ditemukan.',
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Canvas berhasil ditemukan.',
+                'data' => $canvas
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil canvas.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+
 
 
     /**
