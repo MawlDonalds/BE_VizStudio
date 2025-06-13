@@ -321,7 +321,7 @@ class ApiCanvasController extends Controller
     public function createCanvas(Request $request)
     {
         try {
-            // Validasi data request
+            // Validasi data request dengan pesan kustom
             $validatedData = $request->validate([
                 'id_project' => 'required|exists:public.projects,id_project',
                 'name' => 'required|string|max:255',
@@ -330,6 +330,8 @@ class ApiCanvasController extends Controller
                 'modified_by' => 'nullable|string|max:255',
                 'modified_time' => 'nullable|date',
                 'is_deleted' => 'nullable|boolean',
+            ], [
+                'name.max' => 'Nama kanvas tidak boleh melebihi 255 karakter.',
             ]);
 
             // Membuat canvas baru
@@ -343,14 +345,21 @@ class ApiCanvasController extends Controller
                 'is_deleted' => $validatedData['is_deleted'] ?? false,
             ]);
 
-            // Mengembalikan response sukses dengan data canvas
+            // Response sukses
             return response()->json([
                 'success' => true,
                 'message' => 'Canvas berhasil ditambahkan.',
                 'canvas' => $canvas
             ], 201);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // Response jika validasi gagal
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal.',
+                'errors' => $e->errors()
+            ], 422);
         } catch (\Exception $e) {
-            // Menangani error dan mengembalikan response gagal
+            // Response jika terjadi error lain
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal menambah canvas.',
@@ -359,12 +368,15 @@ class ApiCanvasController extends Controller
         }
     }
 
+
     public function updateCanvas(Request $request, $id_canvas)
     {
         try {
-            // Validasi input
+            // Validasi input dengan pesan kustom
             $validatedData = $request->validate([
                 'name' => 'required|string|max:255',
+            ], [
+                'name.max' => 'Nama kanvas tidak boleh melebihi 255 karakter.',
             ]);
 
             // Cari canvas berdasarkan id_canvas
@@ -379,8 +391,8 @@ class ApiCanvasController extends Controller
 
             // Update nama canvas
             $canvas->name = $validatedData['name'];
-            $canvas->modified_by = $request->user() ? $request->user()->name : 'admin';  // Bisa diganti sesuai user yang mengubah
-            $canvas->modified_time = now();  // Set waktu modifikasi
+            $canvas->modified_by = $request->user() ? $request->user()->name : 'admin';
+            $canvas->modified_time = now();
 
             // Simpan perubahan ke database
             $canvas->save();
@@ -388,8 +400,14 @@ class ApiCanvasController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Nama canvas berhasil diperbarui.',
-                'canvas' => $canvas,  // Kembalikan data canvas yang telah diperbarui
+                'canvas' => $canvas,
             ], 200);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal.',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -398,6 +416,7 @@ class ApiCanvasController extends Controller
             ], 500);
         }
     }
+
 
     public function deleteCanvas($id_canvas)
     {
