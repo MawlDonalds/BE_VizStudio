@@ -19,6 +19,7 @@ class Visualization extends Model
         'visualization_type',
         'query',
         'config',
+        'builder_payload', // Tambahkan ini
         'width',
         'height',
         'position_x',
@@ -32,6 +33,7 @@ class Visualization extends Model
 
     protected $casts = [
         'config' => 'array',
+        'builder_payload' => 'array', // Tambahkan ini juga
     ];
 
     public function datasource()

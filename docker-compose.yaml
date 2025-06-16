@@ -8,10 +8,10 @@ services:
     environment:
       - APP_ENV=production
       - APP_DEBUG=false
-      - DB_HOST=postgres
+      - DB_HOST=34.101.242.165
       - DB_DATABASE=tugas-akhir
       - DB_USERNAME=postgres
-      - DB_PASSWORD=Rashford10
+      - DB_PASSWORD=KoTA110_TA
       - DB_CONNECTION=pgsql
     depends_on:
       postgres:
@@ -20,11 +20,11 @@ services:
       - ./storage:/var/www/storage
 
   postgres:
-    image: postgres:15-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_DB: tugas-akhir
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: Rashford10
+      POSTGRES_PASSWORD: KoTA110_TA
     ports:
       - "5432:5432"
     volumes:

@@ -88,9 +88,17 @@ class ApiConnectDatabaseController extends Controller
             // Ambil daftar tabel
             $tables = $this->getTablesFromDatabase($datasource->name, $datasource->type);
 
+            // Kelompokkan tabel berdasarkan prefix
+            $groupedTables = $this->groupTablesByPrefix($tables);
+
             return response()->json([
                 'success' => true,
-                'data' => $tables
+                'data' => [
+                    'tables' => $tables,
+                    'grouped_tables' => $groupedTables,
+                    'total_tables' => count($tables),
+                    'total_groups' => count($groupedTables)
+                ]
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -98,6 +106,56 @@ class ApiConnectDatabaseController extends Controller
                 'message' => 'Gagal mengambil daftar tabel: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    private function groupTablesByPrefix($tables)
+    {
+        $grouped = [];
+        
+        foreach ($tables as $table) {
+            // Cek apakah tabel mengandung '__'
+            if (strpos($table, '__') !== false) {
+                // Ambil prefix sebelum '__'
+                $prefix = explode('__', $table)[0];
+                $tableName = explode('__', $table, 2)[1]; // Ambil nama setelah '__'
+                
+                // Kelompokkan berdasarkan prefix
+                if (!isset($grouped[$prefix])) {
+                    $grouped[$prefix] = [
+                        'prefix' => $prefix,
+                        'tables' => []
+                    ];
+                }
+                
+                $grouped[$prefix]['tables'][] = [
+                    'full_name' => $table,
+                    'table_name' => $tableName
+                ];
+            } else {
+                // Tabel tanpa '__' masuk ke grup 'ungrouped'
+                if (!isset($grouped['ungrouped'])) {
+                    $grouped['ungrouped'] = [
+                        'prefix' => 'ungrouped',
+                        'tables' => []
+                    ];
+                }
+                
+                $grouped['ungrouped']['tables'][] = [
+                    'full_name' => $table,
+                    'table_name' => $table
+                ];
+            }
+        }
+        
+        // Urutkan grup berdasarkan nama prefix
+        ksort($grouped);
+        
+        // Tambahkan jumlah tabel per grup
+        foreach ($grouped as $prefix => &$group) {
+            $group['table_count'] = count($group['tables']);
+        }
+        
+        return $grouped;
     }
 
     private function getTablesFromDatabase($connectionName, $dbType)
@@ -120,10 +178,7 @@ class ApiConnectDatabaseController extends Controller
 
             return $tables;
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Gagal mengambil daftar tabel dari database: ' . $e->getMessage()
-            ], 500);
+            throw new \Exception('Gagal mengambil daftar tabel dari database: ' . $e->getMessage());
         }
     }
 

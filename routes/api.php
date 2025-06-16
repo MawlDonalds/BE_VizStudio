@@ -2,9 +2,11 @@
 
 use App\Http\Controllers\Api\ApiCanvasController;
 use App\Http\Controllers\Api\ApiConnectDatabaseController;
+use App\Http\Controllers\Api\ApiETLController;
 use App\Http\Controllers\Api\ApiGetDataController;
 use App\Http\Controllers\Api\ApiVisualizationController;
 use App\Http\Controllers\Api\ApiOtentikasiController;
+use App\Http\Controllers\Api\ETLController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -36,6 +38,7 @@ Route::prefix('kelola-dashboard')->group(function () {
     // Route::post('/table-data', [ApiGetDataController::class, 'getTableDataByColumns']);
     Route::post('/visualisasi-data', [ApiGetDataController::class, 'getVisualisasiData']);
     Route::post('/convert-sql', [ApiVisualizationController::class, 'convertSql']);
+    Route::post('/get-joinable-tables', [ApiGetDataController::class, 'getJoinableTables']);
 
     // Route::post('/save-chart', [ApiGetDataController::class, 'saveChart']);
     Route::get('/latest', [ApiCanvasController::class, 'getLatestVisualization']);
@@ -57,4 +60,8 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::get('/canvas/{id_canvas}', [ApiCanvasController::class, 'getCanvas']);
     Route::get('/project/{id_project}/canvases', [ApiCanvasController::class, 'getCanvasByProject']);
     Route::get('/first-canvas', [ApiCanvasController::class, 'getFirstCanvas']);
+
+    Route::post('/etl/run', [ApiETLController::class, 'run']);
+    Route::post('/etl/refresh', [ApiETLController::class, 'refresh']);
+    Route::post('/etl/full-refresh', [ApiETLController::class, 'fullRefresh']);
 });
