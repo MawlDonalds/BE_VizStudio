@@ -14,9 +14,18 @@ Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 
+// Route::middleware('auth:sanctum')->group(function () {
+//     Route::post('/logout', [ApiOtentikasiController::class, 'logoutUser']);
+// });
+// Route::middleware('auth:sanctum')->post('/logout', [ApiOtentikasiController::class, 'logoutUser']);
+
+
 Route::prefix('otentikasi')->group(function () {
     Route::post('/register', [ApiOtentikasiController::class, 'registerUser']);
     Route::post('/login', [ApiOtentikasiController::class, 'loginUser']);
+    Route::get('/logout', [ApiOtentikasiController::class, 'logoutUser'])->middleware('auth:sanctum');
+    Route::get('/get-user', [ApiOtentikasiController::class, 'getUser'])->middleware('auth:sanctum');
+    Route::post('/update-access', [ApiOtentikasiController::class, 'updateAccess'])->middleware('auth:sanctum');
 });
 
 Route::prefix('kelola-dashboard')->group(function () {
