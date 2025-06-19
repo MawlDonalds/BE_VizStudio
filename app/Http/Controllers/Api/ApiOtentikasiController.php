@@ -231,7 +231,8 @@ class ApiOtentikasiController extends Controller
                         ->where('id_project', $projectId)
                         ->update([
                             'access' => $access,
-                            'modified_time' => now()
+                            'modified_time' => now(),
+                            'modified_by' => $modifiedBy
                         ]);
                 } else {
                     // Insert record baru
