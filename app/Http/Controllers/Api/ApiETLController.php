@@ -243,7 +243,8 @@ class ApiETLController extends Controller
                 'port'            => $validated['port'],
                 'database_name'   => $validated['database'],
                 'username'        => $validated['username'],
-                'password'        => Crypt::encrypt($validated['password']),
+                // 'password'        => Crypt::encrypt($validated['password']),
+                'password'        => $validated['password'],
                 'modified_by'     => Auth::id() ?? 1,
                 'modified_time'   => now(),
                 'is_deleted'      => false
