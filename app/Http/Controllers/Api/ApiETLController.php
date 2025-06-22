@@ -35,7 +35,9 @@ class ApiETLController extends Controller
             'username' => 'required|string',
             'password' => 'required|string',
             'connection_name' => [
-                'required', 'string', 'alpha_dash',
+                'required',
+                'string',
+                'alpha_dash',
                 function ($attribute, $value, $fail) use ($warehouseConnection) {
                     $existing = collect(DB::connection($warehouseConnection)->select("
                         SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE ?
@@ -56,18 +58,27 @@ class ApiETLController extends Controller
 
         try {
             $validated = $request->validate([
-                'host' => 'required|string', 'port' => 'required|numeric',
-                'database' => 'required|string', 'username' => 'required|string',
-                'password' => 'required|string', 'connection_name' => 'required|string|alpha_dash'
+                'host' => 'required|string',
+                'port' => 'required|numeric',
+                'database' => 'required|string',
+                'username' => 'required|string',
+                'password' => 'required|string',
+                'connection_name' => 'required|string|alpha_dash'
             ]);
         } catch (ValidationException $e) {
             return response()->json(['status' => 'validation_error', 'errors' => $e->errors()], 422);
         }
 
         config(["database.connections.{$validated['connection_name']}" => [
-            'driver' => 'pgsql', 'host' => $validated['host'], 'port' => $validated['port'],
-            'database' => $validated['database'], 'username' => $validated['username'],
-            'password' => $validated['password'], 'charset' => 'utf8', 'prefix' => '', 'schema' => 'public',
+            'driver' => 'pgsql',
+            'host' => $validated['host'],
+            'port' => $validated['port'],
+            'database' => $validated['database'],
+            'username' => $validated['username'],
+            'password' => $validated['password'],
+            'charset' => 'utf8',
+            'prefix' => '',
+            'schema' => 'public',
         ]]);
 
         $sourceConnection = $validated['connection_name'];
@@ -180,9 +191,15 @@ class ApiETLController extends Controller
     private function performEtlProcess(array $validated)
     {
         config(["database.connections.{$validated['connection_name']}" => [
-            'driver' => 'pgsql', 'host' => $validated['host'], 'port' => $validated['port'],
-            'database' => $validated['database'], 'username' => $validated['username'],
-            'password' => $validated['password'], 'charset' => 'utf8', 'prefix' => '', 'schema' => 'public',
+            'driver' => 'pgsql',
+            'host' => $validated['host'],
+            'port' => $validated['port'],
+            'database' => $validated['database'],
+            'username' => $validated['username'],
+            'password' => $validated['password'],
+            'charset' => 'utf8',
+            'prefix' => '',
+            'schema' => 'public',
         ]]);
 
         $sourceConnection = $validated['connection_name'];
@@ -474,13 +491,82 @@ class ApiETLController extends Controller
                     $maxLength = $columnInfo->character_maximum_length ?? 255;
                     $column = $table->char($colName, $maxLength);
                     break;
-                case 'text': default: $column = $table->text($colName);
+                case 'numeric':
+                case 'decimal':
+                    $precision = $columnInfo->numeric_precision ?? 10;
+                    $scale = $columnInfo->numeric_scale ?? 2;
+                    $column = $table->decimal($colName, $precision, $scale);
+                    break;
+                case 'real':
+                case 'float4':
+                    $column = $table->float($colName);
+                    break;
+                case 'double precision':
+                case 'float8':
+                    $column = $table->double($colName);
+                    break;
+                case 'money':
+                    $column = $table->decimal($colName, 19, 4);
+                    break;
+                case 'date':
+                    $column = $table->date($colName);
+                    break;
+                case 'time':
+                case 'time without time zone':
+                    $column = $table->time($colName);
+                    break;
+                case 'timetz':
+                case 'time with time zone':
+                    $column = $table->timeTz($colName);
+                    break;
+                case 'timestamp':
+                case 'timestamp without time zone':
+                    $column = $table->timestamp($colName);
+                    break;
+                case 'timestamptz':
+                case 'timestamp with time zone':
+                    $column = $table->timestampTz($colName);
+                    break;
+                case 'boolean':
+                case 'bool':
+                    $column = $table->boolean($colName);
+                    break;
+                case 'json':
+                    $column = $table->json($colName);
+                    break;
+                case 'jsonb':
+                    $column = $table->jsonb($colName);
+                    break;
+                case 'uuid':
+                    $column = $table->uuid($colName);
+                    break;
+                case 'inet':
+                    $column = $table->ipAddress($colName);
+                    break;
+                case 'character varying':
+                case 'varchar':
+                    $maxLength = $columnInfo->character_maximum_length;
+                    if ($maxLength && $maxLength <= 255) {
+                        $column = $table->string($colName, $maxLength);
+                    } else {
+                        $column = $table->text($colName);
+                    }
+                    break;
+                case 'character':
+                case 'char':
+                    $maxLength = $columnInfo->character_maximum_length ?? 255;
+                    $column = $table->char($colName, $maxLength);
+                    break;
+                case 'text':
+                default:
+                    $column = $table->text($colName);
             }
-            if ($isNullable) { $column->nullable(); }
         } catch (\Exception $e) {
             Log::warning("Failed to map column type for {$colName} ({$dataType}), falling back to text", ['error' => $e->getMessage()]);
             $column = $table->text($colName);
-            if ($isNullable) { $column->nullable(); }
+            if ($isNullable) {
+                $column->nullable();
+            }
         }
     }
 

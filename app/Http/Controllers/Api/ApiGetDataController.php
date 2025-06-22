@@ -71,16 +71,20 @@ class ApiGetDataController extends Controller
         $pkOfA = $metadata['primaryKeys'][$tableA] ?? null;
         if ($pkOfA && isset($metadata['tableColumns'][$tableB]) && in_array($pkOfA, $metadata['tableColumns'][$tableB])) {
             return (object) [
-                'referencing_table' => $tableB, 'referencing_column' => $pkOfA,
-                'referenced_table' => $tableA, 'referenced_column' => $pkOfA
+                'referencing_table' => $tableB,
+                'referencing_column' => $pkOfA,
+                'referenced_table' => $tableA,
+                'referenced_column' => $pkOfA
             ];
         }
 
         $pkOfB = $metadata['primaryKeys'][$tableB] ?? null;
         if ($pkOfB && isset($metadata['tableColumns'][$tableA]) && in_array($pkOfB, $metadata['tableColumns'][$tableA])) {
             return (object) [
-                'referencing_table' => $tableA, 'referencing_column' => $pkOfB,
-                'referenced_table' => $tableB, 'referenced_column' => $pkOfB
+                'referencing_table' => $tableA,
+                'referencing_column' => $pkOfB,
+                'referenced_table' => $tableB,
+                'referenced_column' => $pkOfB
             ];
         }
 
