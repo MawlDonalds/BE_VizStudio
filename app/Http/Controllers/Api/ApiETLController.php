@@ -11,6 +11,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Crypt;
 
 class ApiETLController extends Controller
 {
@@ -29,15 +30,14 @@ class ApiETLController extends Controller
 
         $validated = $request->validate([
             'id_project' => 'nullable|integer',
+            'driver' => 'required|string|in:pgsql,mysql,sqlsrv',
             'host' => 'required|string',
             'port' => 'required|numeric',
             'database' => 'required|string',
             'username' => 'required|string',
             'password' => 'required|string',
             'connection_name' => [
-                'required',
-                'string',
-                'alpha_dash',
+                'required', 'string', 'alpha_dash',
                 function ($attribute, $value, $fail) use ($warehouseConnection) {
                     $existing = collect(DB::connection($warehouseConnection)->select("
                         SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE ?
@@ -54,54 +54,44 @@ class ApiETLController extends Controller
 
     public function refresh(Request $request)
     {
-        $warehouseConnection = $this->warehouseConnectionName;
+        $warehouseConnection = DB::connection($this->warehouseConnectionName);
 
         try {
             $validated = $request->validate([
-                'host' => 'required|string',
-                'port' => 'required|numeric',
-                'database' => 'required|string',
-                'username' => 'required|string',
-                'password' => 'required|string',
-                'connection_name' => 'required|string|alpha_dash'
+                'driver' => 'required|string|in:pgsql,mysql,sqlsrv',
+                'host' => 'required|string', 'port' => 'required|numeric',
+                'database' => 'required|string', 'username' => 'required|string',
+                'password' => 'required|string', 'connection_name' => 'required|string|alpha_dash'
             ]);
         } catch (ValidationException $e) {
             return response()->json(['status' => 'validation_error', 'errors' => $e->errors()], 422);
         }
 
-        config(["database.connections.{$validated['connection_name']}" => [
-            'driver' => 'pgsql',
-            'host' => $validated['host'],
-            'port' => $validated['port'],
-            'database' => $validated['database'],
-            'username' => $validated['username'],
-            'password' => $validated['password'],
-            'charset' => 'utf8',
-            'prefix' => '',
-            'schema' => 'public',
+        $sourceConnectionName = $validated['connection_name'];
+        config(["database.connections.{$sourceConnectionName}" => [
+            'driver' => $validated['driver'], 'host' => $validated['host'], 'port' => $validated['port'],
+            'database' => $validated['database'], 'username' => $validated['username'],
+            'password' => $validated['password'], 'charset' => 'utf8', 'prefix' => '',
         ]]);
 
-        $sourceConnection = $validated['connection_name'];
-
         try {
-            $tables = DB::connection($sourceConnection)->select("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'");
+            $sourceConnection = DB::connection($sourceConnectionName);
+            $schema = $this->getSourceSchema($sourceConnection);
+            $tables = $this->getSourceTables($sourceConnection, $schema);
             $refreshedTables = [];
 
             foreach ($tables as $table) {
                 $tableName = $table->table_name;
-                $warehouseTable = $sourceConnection . '__' . $tableName;
+                $warehouseTable = $sourceConnectionName . '__' . $tableName;
 
-                if (!Schema::connection($warehouseConnection)->hasTable($warehouseTable)) {
+                if (!Schema::connection($warehouseConnection->getName())->hasTable($warehouseTable)) {
                     continue;
                 }
 
-                $this->disableConstraints($warehouseConnection, $warehouseTable);
-
-                DB::connection($warehouseConnection)->table($warehouseTable)->truncate();
-
+                $this->disableConstraints($warehouseConnection, $warehouseTable, 'pgsql');
+                $warehouseConnection->table($warehouseTable)->truncate();
                 $totalRows = $this->bulkRefreshTable($sourceConnection, $warehouseConnection, $tableName, $warehouseTable);
-
-                $this->enableConstraints($warehouseConnection, $warehouseTable);
+                $this->enableConstraints($warehouseConnection, $warehouseTable, 'pgsql');
 
                 $refreshedTables[] = [
                     'source_table' => $tableName,
@@ -112,7 +102,7 @@ class ApiETLController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'message' => 'Data warehouse berhasil diperbarui dari sumber: ' . $sourceConnection,
+                'message' => 'Data warehouse berhasil diperbarui dari sumber: ' . $sourceConnectionName,
                 'refreshed_tables' => $refreshedTables
             ]);
         } catch (\Exception $e) {
@@ -125,6 +115,7 @@ class ApiETLController extends Controller
         try {
             $validated = $request->validate([
                 'id_project' => 'nullable|integer',
+                'driver' => 'required|string|in:pgsql,mysql,sqlsrv',
                 'host' => 'required|string', 'port' => 'required|numeric',
                 'database' => 'required|string', 'username' => 'required|string',
                 'password' => 'required|string', 'connection_name' => 'required|string|alpha_dash'
@@ -134,7 +125,6 @@ class ApiETLController extends Controller
         }
 
         $connectionName = $validated['connection_name'];
-
         $tablesToDrop = DB::connection($this->warehouseConnectionName)->select("
             SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE ?
         ", ["{$connectionName}__%"]);
@@ -173,7 +163,7 @@ class ApiETLController extends Controller
             if ($datasource) {
                 $datasource->is_deleted = true;
                 $datasource->modified_time = now();
-                $datasource->modified_by = Auth::id() || "1";
+                $datasource->modified_by = Auth::id() ?? 1;
                 $datasource->save();
             }
 
@@ -190,449 +180,353 @@ class ApiETLController extends Controller
 
     private function performEtlProcess(array $validated)
     {
-        config(["database.connections.{$validated['connection_name']}" => [
-            'driver' => 'pgsql',
-            'host' => $validated['host'],
-            'port' => $validated['port'],
-            'database' => $validated['database'],
-            'username' => $validated['username'],
-            'password' => $validated['password'],
-            'charset' => 'utf8',
-            'prefix' => '',
-            'schema' => 'public',
+        $sourceConnectionName = $validated['connection_name'];
+        $driver = $validated['driver'];
+        
+        config(["database.connections.{$sourceConnectionName}" => [
+            'driver' => $driver, 'host' => $validated['host'], 'port' => $validated['port'],
+            'database' => $validated['database'], 'username' => $validated['username'],
+            'password' => $validated['password'], 'charset' => 'utf8', 'prefix' => '',
         ]]);
 
-        $sourceConnection = $validated['connection_name'];
-        $warehouseConnection = $this->warehouseConnectionName;
+        $warehouseConnection = DB::connection($this->warehouseConnectionName);
 
         try {
-            $this->optimizeConnections($sourceConnection, $warehouseConnection);
-
-            DB::connection($sourceConnection)->getPdo();
-            $tables = DB::connection($sourceConnection)->select("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'");
+            $sourceConnection = DB::connection($sourceConnectionName);
+            $sourceConnection->getPdo();
+            
+            $this->optimizeConnections($sourceConnection, $warehouseConnection, $driver, 'pgsql');
+            
+            $schema = $this->getSourceSchema($sourceConnection);
+            $tables = $this->getSourceTables($sourceConnection, $schema);
             $processedTables = [];
 
             foreach ($tables as $table) {
                 $tableName = $table->table_name;
                 $startTime = microtime(true);
 
-                $columns = DB::connection($sourceConnection)->select("
-                    SELECT column_name, data_type, is_nullable, column_default,
-                           character_maximum_length, numeric_precision, numeric_scale, ordinal_position,
-                           CASE WHEN data_type IN ('date', 'timestamp', 'timestamptz', 'time', 'timetz') THEN true ELSE false END as is_date_type,
-                           CASE WHEN data_type IN ('integer', 'bigint', 'numeric', 'decimal', 'real', 'double precision', 'smallint') THEN true ELSE false END as is_numeric_type
-                    FROM information_schema.columns
-                    WHERE table_name = ?
-                    ORDER BY ordinal_position
-                ", [$tableName]);
-
+                $columns = $this->getSourceColumns($sourceConnection, $tableName, $schema);
                 if (empty($columns)) continue;
 
-                $primaryKeyColumns = $this->getPrimaryKeyColumns($sourceConnection, $tableName);
-                $warehouseTable = $sourceConnection . '__' . $tableName;
+                $primaryKeyColumns = $this->getSourcePrimaryKeyColumns($sourceConnection, $tableName, $schema);
+                $warehouseTable = $sourceConnectionName . '__' . $tableName;
 
-                Schema::connection($warehouseConnection)->create($warehouseTable, function (Blueprint $table) use ($columns, $primaryKeyColumns) {
+                Schema::connection($warehouseConnection->getName())->create($warehouseTable, function (Blueprint $table) use ($columns, $driver) {
                     foreach ($columns as $col) {
-                        $this->addColumnWithProperType($table, $col);
+                        $this->addColumnWithProperType($table, $col, $driver);
                     }
                     $table->timestamp('_etl_created_at')->default(DB::raw('CURRENT_TIMESTAMP'));
                     $table->timestamp('_etl_updated_at')->default(DB::raw('CURRENT_TIMESTAMP'));
                 });
 
-                $totalRows = $this->bulkTransferData($sourceConnection, $warehouseConnection, $tableName, $warehouseTable, collect($columns)->pluck('column_name')->toArray());
+                $warehouseColumnsInfo = $this->getWarehouseColumnsInfo($warehouseTable);
 
+                $totalRows = $this->bulkTransferData($sourceConnection, $warehouseConnection, $tableName, $warehouseTable, collect($columns)->pluck('column_name')->toArray(), $warehouseColumnsInfo);
                 $this->addConstraintsAndIndexes($warehouseConnection, $warehouseTable, $primaryKeyColumns, $columns);
-
+                
                 $endTime = microtime(true);
                 $processingTime = round($endTime - $startTime, 2);
 
                 $processedTables[] = [
-                    'source_table' => $tableName,
-                    'warehouse_table' => $warehouseTable,
-                    'columns_count' => count($columns),
-                    'rows_count' => $totalRows,
-                    'primary_key_columns' => $primaryKeyColumns,
-                    'processing_time_seconds' => $processingTime,
+                    'source_table' => $tableName, 'warehouse_table' => $warehouseTable,
+                    'columns_count' => count($columns), 'rows_count' => $totalRows,
+                    'primary_key_columns' => $primaryKeyColumns, 'processing_time_seconds' => $processingTime,
                     'rows_per_second' => $totalRows > 0 ? round($totalRows / max($processingTime, 0.001)) : 0,
-                    'date_columns' => collect($columns)->where('is_date_type', true)->pluck('column_name')->toArray(),
-                    'numeric_columns' => collect($columns)->where('is_numeric_type', true)->pluck('column_name')->toArray()
                 ];
             }
 
-            $datasource = Datasource::firstOrNew(['name' => $sourceConnection]);
+            $datasource = Datasource::firstOrNew(['name' => $sourceConnectionName]);
             $datasource->fill([
                 'id_project'      => $validated['id_project'] ?? 1,
-                'type'            => 'pgsql',
+                'type'            => $driver,
                 'host'            => $validated['host'],
                 'port'            => $validated['port'],
                 'database_name'   => $validated['database'],
                 'username'        => $validated['username'],
-                'password'        => encrypt($validated['password']),
-                'modified_by'     => Auth::id() || "1",
+                'password'        => Crypt::encrypt($validated['password']),
+                'modified_by'     => Auth::id() ?? 1,
                 'modified_time'   => now(),
                 'is_deleted'      => false
             ]);
 
             if (!$datasource->exists) {
-                $datasource->created_by = Auth::id() || "1";
+                $datasource->created_by = Auth::id() ?? 1;
                 $datasource->created_time = now();
             }
             $datasource->save();
 
             return response()->json([
-                'status' => 'success',
-                'message' => 'ETL berhasil dijalankan dari koneksi: ' . $sourceConnection,
-                'processed_tables' => $processedTables,
-                'total_tables' => count($processedTables),
+                'status' => 'success', 'message' => 'ETL berhasil dijalankan dari koneksi: ' . $sourceConnectionName,
+                'processed_tables' => $processedTables, 'total_tables' => count($processedTables),
                 'total_rows' => collect($processedTables)->sum('rows_count'),
-                'average_speed' => collect($processedTables)->where('rows_per_second', '>', 0)->avg('rows_per_second')
             ]);
         } catch (\Exception $e) {
-            Log::error("ETL Error: " . $e->getMessage(), [
-                'connection' => $sourceConnection,
-                'trace' => $e->getTraceAsString()
-            ]);
+            Log::error("ETL Error: " . $e->getMessage(), ['connection' => $sourceConnectionName, 'trace' => $e->getTraceAsString()]);
+            DB::disconnect($sourceConnectionName);
             return response()->json(['status' => 'error', 'message' => 'ETL gagal: ' . $e->getMessage()], 500);
+        } finally {
+            DB::disconnect($sourceConnectionName);
         }
     }
-
-    private function optimizeConnections($sourceConnection, $warehouseConnection)
+    
+    private function optimizeConnections($sourceConnection, $warehouseConnection, $sourceDriver, $warehouseDriver)
     {
         try {
-            DB::connection($sourceConnection)->statement("SET work_mem = '256MB'");
-            DB::connection($sourceConnection)->statement("SET maintenance_work_mem = '512MB'");
-
-            DB::connection($warehouseConnection)->statement("SET synchronous_commit = OFF");
-            DB::connection($warehouseConnection)->statement("SET wal_buffers = '16MB'");
-            DB::connection($warehouseConnection)->statement("SET checkpoint_completion_target = 0.9");
-            DB::connection($warehouseConnection)->statement("SET work_mem = '256MB'");
-            DB::connection($warehouseConnection)->statement("SET maintenance_work_mem = '1GB'");
-            DB::connection($warehouseConnection)->statement("SET shared_buffers = '256MB'");
+            if ($sourceDriver === 'pgsql') {
+                $sourceConnection->statement("SET work_mem = '256MB'");
+            }
+            if ($warehouseDriver === 'pgsql') {
+                $warehouseConnection->statement("SET synchronous_commit = OFF");
+                $warehouseConnection->statement("SET work_mem = '256MB'");
+                $warehouseConnection->statement("SET maintenance_work_mem = '1GB'");
+            }
         } catch (\Exception $e) {
-            Log::warning("Failed to optimize connections: " . $e->getMessage());
+            Log::warning("Gagal melakukan optimasi koneksi: " . $e->getMessage());
         }
     }
 
-    private function bulkTransferData($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable, $columnNames)
+    private function bulkTransferData($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable, $columnNames, $warehouseColumnsInfo)
     {
         $totalRows = 0;
         $currentTime = now();
+        $sourceDriver = $sourceConnection->getDriverName();
 
-        $this->disableConstraints($warehouseConnection, $warehouseTable);
+        $this->disableConstraints($warehouseConnection, $warehouseTable, 'pgsql');
+        $this->disableConstraints($sourceConnection, $sourceTable, $sourceDriver);
 
         try {
-            DB::connection($warehouseConnection)->beginTransaction();
-
-            DB::connection($sourceConnection)
-                ->table($sourceTable)
-                ->orderBy($columnNames[0] ?? 'id')
-                ->chunk($this->chunkSize, function ($chunk) use ($warehouseConnection, $warehouseTable, $columnNames, &$totalRows, $currentTime) {
+            DB::connection($warehouseConnection->getName())->beginTransaction();
+            $sourceConnection->table($sourceTable)
+                ->orderBy($columnNames[0] ?? DB::raw('1'))
+                ->chunk($this->chunkSize, function ($chunk) use ($warehouseConnection, $warehouseTable, &$totalRows, $currentTime, $warehouseColumnsInfo) {
                     $batchData = [];
-
                     foreach ($chunk as $row) {
                         $insertData = [];
-                        foreach ($columnNames as $colName) {
-                            $insertData[$colName] = $row->$colName ?? null;
+                        $sourceRowArray = (array)$row;
+
+                        foreach ($sourceRowArray as $key => $value) {
+                            if ($value === null || trim((string)$value) === '') {
+                                $columnType = $warehouseColumnsInfo[$key] ?? 'text';
+                                
+                                if (str_contains($columnType, 'int') || str_contains($columnType, 'numeric') || str_contains($columnType, 'decimal') || str_contains($columnType, 'double') || str_contains($columnType, 'real')) {
+                                    $insertData[$key] = 0;
+                                } elseif (str_contains($columnType, 'date') || str_contains($columnType, 'timestamp')) {
+                                    $insertData[$key] = '1970-01-01 00:00:00';
+                                } elseif (str_contains($columnType, 'bool')) {
+                                    $insertData[$key] = false;
+                                } else {
+                                    $insertData[$key] = 'Tidak Diketahui';
+                                }
+                            } else {
+                                $insertData[$key] = $value;
+                            }
                         }
+
                         $insertData['_etl_created_at'] = $currentTime;
                         $insertData['_etl_updated_at'] = $currentTime;
-
                         $batchData[] = $insertData;
-
-                        if (count($batchData) >= $this->batchSize) {
-                            DB::connection($warehouseConnection)->table($warehouseTable)->insert($batchData);
-                            $totalRows += count($batchData);
-                            $batchData = [];
-                        }
                     }
 
                     if (!empty($batchData)) {
-                        DB::connection($warehouseConnection)->table($warehouseTable)->insert($batchData);
+                        $warehouseConnection->table($warehouseTable)->insert($batchData);
                         $totalRows += count($batchData);
                     }
                 });
-
-            DB::connection($warehouseConnection)->commit();
-
+            DB::connection($warehouseConnection->getName())->commit();
         } catch (\Exception $e) {
-            DB::connection($warehouseConnection)->rollBack();
+            DB::connection($warehouseConnection->getName())->rollBack();
             throw $e;
         } finally {
-            $this->enableConstraints($warehouseConnection, $warehouseTable);
+            $this->enableConstraints($warehouseConnection, $warehouseTable, 'pgsql');
+            $this->enableConstraints($sourceConnection, $sourceTable, $sourceDriver);
         }
-
         return $totalRows;
     }
 
     private function bulkRefreshTable($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable)
     {
-        $columnNames = Schema::connection($sourceConnection)->getColumnListing($sourceTable);
-        return $this->bulkTransferData($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable, $columnNames);
+        $columnNames = Schema::connection($sourceConnection->getName())->getColumnListing($sourceTable);
+        $warehouseColumnsInfo = $this->getWarehouseColumnsInfo($warehouseTable);
+        return $this->bulkTransferData($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable, $columnNames, $warehouseColumnsInfo);
     }
 
-    private function disableConstraints($connectionName, $tableName)
+    private function getWarehouseColumnsInfo(string $tableName): array
+    {
+        $columns = DB::connection($this->warehouseConnectionName)->select(
+            "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ?",
+            [$tableName]
+        );
+
+        $info = [];
+        foreach ($columns as $column) {
+            $info[$column->column_name] = $column->data_type;
+        }
+        return $info;
+    }
+
+    private function disableConstraints($connection, $tableName, $driver)
     {
         try {
-            DB::connection($connectionName)->statement("ALTER TABLE \"{$tableName}\" DISABLE TRIGGER ALL");
+            switch ($driver) {
+                case 'pgsql': $connection->statement("ALTER TABLE \"{$tableName}\" DISABLE TRIGGER ALL"); break;
+                case 'mysql': $connection->statement("SET FOREIGN_KEY_CHECKS=0;"); break;
+                case 'sqlsrv': $connection->statement("ALTER TABLE \"{$tableName}\" NOCHECK CONSTRAINT ALL"); break;
+            }
         } catch (\Exception $e) {
-            Log::warning("Failed to disable constraints for {$tableName}: " . $e->getMessage());
+            Log::warning("Gagal menonaktifkan constraint untuk {$tableName}: " . $e->getMessage());
         }
     }
 
-    private function enableConstraints($connectionName, $tableName)
+    private function enableConstraints($connection, $tableName, $driver)
     {
         try {
-            DB::connection($connectionName)->statement("ALTER TABLE \"{$tableName}\" ENABLE TRIGGER ALL");
+            switch ($driver) {
+                case 'pgsql': $connection->statement("ALTER TABLE \"{$tableName}\" ENABLE TRIGGER ALL"); break;
+                case 'mysql': $connection->statement("SET FOREIGN_KEY_CHECKS=1;"); break;
+                case 'sqlsrv': $connection->statement("ALTER TABLE \"{$tableName}\" CHECK CONSTRAINT ALL"); break;
+            }
         } catch (\Exception $e) {
-            Log::warning("Failed to enable constraints for {$tableName}: " . $e->getMessage());
+            Log::warning("Gagal mengaktifkan constraint untuk {$tableName}: " . $e->getMessage());
         }
     }
-
-    private function addConstraintsAndIndexes($connectionName, $tableName, $primaryKeyColumns, $columns)
+    
+    private function addConstraintsAndIndexes($connection, $tableName, $primaryKeyColumns, $columns)
     {
         try {
             if (!empty($primaryKeyColumns)) {
-                $pkColumns = implode('", "', $primaryKeyColumns);
-                DB::connection($connectionName)->statement("ALTER TABLE \"{$tableName}\" ADD PRIMARY KEY (\"{$pkColumns}\")");
+                Schema::connection($connection->getName())->table($tableName, function (Blueprint $table) use ($primaryKeyColumns) {
+                    $table->primary($primaryKeyColumns);
+                });
             }
-
-            $this->createOptimalIndexes($tableName, $columns, $connectionName);
-
+            $this->createOptimalIndexes($connection, $tableName, $columns);
         } catch (\Exception $e) {
-            Log::warning("Failed to add constraints/indexes for {$tableName}: " . $e->getMessage());
+            Log::warning("Gagal menambahkan constraint/index untuk {$tableName}: " . $e->getMessage());
         }
     }
 
-    private function getPrimaryKeyColumns($connectionName, $tableName)
+    private function getSourceSchema($connection)
+    {
+        return match ($connection->getDriverName()) {
+            'mysql' => $connection->select('SELECT DATABASE() as dbname')[0]->dbname,
+            'sqlsrv' => 'dbo',
+            'pgsql' => 'public',
+            default => 'public',
+        };
+    }
+
+    private function getSourceTables($connection, $schema)
+    {
+        return $connection->select("
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema = ? AND table_type = 'BASE TABLE'
+        ", [$schema]);
+    }
+    
+    private function getSourceColumns($connection, $tableName, $schema)
+    {
+        $query = "SELECT column_name, data_type, is_nullable, character_maximum_length, numeric_precision, numeric_scale 
+                  FROM information_schema.columns WHERE table_name = ? AND table_schema = ? ORDER BY ordinal_position";
+        return $connection->select($query, [$tableName, $schema]);
+    }
+
+    private function getSourcePrimaryKeyColumns($connection, $tableName, $schema)
     {
         $pkQuery = "
-            SELECT kcu.column_name
-            FROM information_schema.table_constraints AS tc
-            JOIN information_schema.key_column_usage AS kcu
-                ON tc.constraint_name = kcu.constraint_name
-                AND tc.table_schema = kcu.table_schema
-            WHERE tc.constraint_type = 'PRIMARY KEY'
-                AND tc.table_schema = 'public'
-                AND tc.table_name = ?
-            ORDER BY kcu.ordinal_position
-        ";
-
-        $primaryKeyResults = DB::connection($connectionName)->select($pkQuery, [$tableName]);
-        return collect($primaryKeyResults)->pluck('column_name')->toArray();
+            SELECT kcu.column_name 
+            FROM information_schema.table_constraints AS tc 
+            JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema 
+            WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = ? AND tc.table_name = ?
+            ORDER BY kcu.ordinal_position";
+        $results = $connection->select($pkQuery, [$schema, $tableName]);
+        return collect($results)->pluck('column_name')->toArray();
     }
 
-    public function fetchColumnMetadata($tableName)
-    {
-        try {
-            $columns = DB::connection($this->warehouseConnectionName)->select("
-                SELECT column_name, data_type, is_nullable, column_default,
-                       character_maximum_length, numeric_precision, numeric_scale, ordinal_position,
-                       CASE WHEN data_type IN ('date', 'timestamp', 'timestamptz', 'time', 'timetz', 'datetime', 'datetime2', 'smalldatetime', 'datetimeoffset') THEN true ELSE false END as is_date_type,
-                       CASE WHEN data_type IN ('integer', 'bigint', 'numeric', 'decimal', 'real', 'double precision', 'smallint', 'float', 'money') THEN true ELSE false END as is_numeric_type,
-                       CASE WHEN data_type IN ('text', 'varchar', 'char', 'character varying', 'character') THEN true ELSE false END as is_text_type
-                FROM information_schema.columns
-                WHERE table_name = ?
-                ORDER BY ordinal_position
-            ", [$tableName]);
-
-            return response()->json([
-                'success' => true,
-                'data' => $columns,
-                'summary' => [
-                    'total_columns' => count($columns),
-                    'date_columns' => collect($columns)->where('is_date_type', true)->count(),
-                    'numeric_columns' => collect($columns)->where('is_numeric_type', true)->count(),
-                    'text_columns' => collect($columns)->where('is_text_type', true)->count()
-                ]
-            ]);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
-        }
-    }
-
-    private function addColumnWithProperType(Blueprint $table, $columnInfo)
+    private function addColumnWithProperType(Blueprint $table, $columnInfo, $sourceDriver)
     {
         $colName = $columnInfo->column_name;
         $dataType = strtolower($columnInfo->data_type);
-        $isNullable = $columnInfo->is_nullable === 'YES';
+        $isNullable = in_array(strtoupper($columnInfo->is_nullable), ['YES', 'TRUE', '1']);
 
         try {
+            $column = null;
             switch ($dataType) {
-                case 'smallint': case 'int2': $column = $table->smallInteger($colName); break;
-                case 'integer': case 'int': case 'int4': $column = $table->integer($colName); break;
+                case 'int': case 'integer': case 'int4': $column = $table->integer($colName); break;
                 case 'bigint': case 'int8': $column = $table->bigInteger($colName); break;
-                case 'numeric': case 'decimal':
-                    $precision = $columnInfo->numeric_precision ?? 10;
+                case 'smallint': case 'int2': $column = $table->smallInteger($colName); break;
+                case 'tinyint': $column = $table->tinyInteger($colName); break;
+                case 'mediumint': $column = $table->mediumInteger($colName); break;
+
+                case 'numeric': case 'decimal': case 'dec':
+                    $precision = $columnInfo->numeric_precision ?? 18;
                     $scale = $columnInfo->numeric_scale ?? 2;
                     $column = $table->decimal($colName, $precision, $scale);
                     break;
+                case 'money': case 'smallmoney': $column = $table->decimal($colName, 19, 4); break;
+                
                 case 'real': case 'float4': $column = $table->float($colName); break;
-                case 'double precision': case 'float8': $column = $table->double($colName); break;
-                case 'money': $column = $table->decimal($colName, 19, 4); break;
+                case 'float': $column = $table->float($colName, $columnInfo->numeric_precision, $columnInfo->numeric_scale); break;
+                case 'double precision': case 'float8': case 'double': $column = $table->double($colName); break;
+
                 case 'date': $column = $table->date($colName); break;
                 case 'time': case 'time without time zone': $column = $table->time($colName); break;
                 case 'timetz': case 'time with time zone': $column = $table->timeTz($colName); break;
-                case 'timestamp': case 'timestamp without time zone': $column = $table->timestamp($colName); break;
-                case 'timestamptz': case 'timestamp with time zone': $column = $table->timestampTz($colName); break;
-                case 'boolean': case 'bool': $column = $table->boolean($colName); break;
+                case 'timestamp': case 'timestamp without time zone': case 'datetime': case 'datetime2': case 'smalldatetime': $column = $table->timestamp($colName); break;
+                case 'timestamptz': case 'timestamp with time zone': case 'datetimeoffset': $column = $table->timestampTz($colName); break;
+                case 'year': $column = $table->year($colName); break;
+
+                case 'boolean': case 'bool': case 'bit': $column = $table->boolean($colName); break;
+                
                 case 'json': $column = $table->json($colName); break;
                 case 'jsonb': $column = $table->jsonb($colName); break;
-                case 'uuid': $column = $table->uuid($colName); break;
+                
+                case 'uuid': case 'uniqueidentifier': $column = $table->uuid($colName); break;
                 case 'inet': $column = $table->ipAddress($colName); break;
-                case 'character varying': case 'varchar':
+                case 'macaddr': $column = $table->macAddress($colName); break;
+
+                case 'bytea': case 'binary': case 'varbinary': case 'blob': case 'tinyblob': case 'mediumblob': case 'longblob': $column = $table->binary($colName); break;
+                
+                case 'character varying': case 'varchar': case 'nvarchar':
                     $maxLength = $columnInfo->character_maximum_length;
-                    if ($maxLength && $maxLength <= 255) {
-                        $column = $table->string($colName, $maxLength);
-                    } else {
-                        $column = $table->text($colName);
-                    }
+                    $column = $maxLength > 0 ? $table->string($colName, $maxLength) : $table->text($colName);
                     break;
-                case 'character': case 'char':
-                    $maxLength = $columnInfo->character_maximum_length ?? 255;
+                case 'character': case 'char': case 'nchar':
+                    $maxLength = $columnInfo->character_maximum_length ?? 1;
                     $column = $table->char($colName, $maxLength);
                     break;
-                case 'numeric':
-                case 'decimal':
-                    $precision = $columnInfo->numeric_precision ?? 10;
-                    $scale = $columnInfo->numeric_scale ?? 2;
-                    $column = $table->decimal($colName, $precision, $scale);
-                    break;
-                case 'real':
-                case 'float4':
-                    $column = $table->float($colName);
-                    break;
-                case 'double precision':
-                case 'float8':
-                    $column = $table->double($colName);
-                    break;
-                case 'money':
-                    $column = $table->decimal($colName, 19, 4);
-                    break;
-                case 'date':
-                    $column = $table->date($colName);
-                    break;
-                case 'time':
-                case 'time without time zone':
-                    $column = $table->time($colName);
-                    break;
-                case 'timetz':
-                case 'time with time zone':
-                    $column = $table->timeTz($colName);
-                    break;
-                case 'timestamp':
-                case 'timestamp without time zone':
-                    $column = $table->timestamp($colName);
-                    break;
-                case 'timestamptz':
-                case 'timestamp with time zone':
-                    $column = $table->timestampTz($colName);
-                    break;
-                case 'boolean':
-                case 'bool':
-                    $column = $table->boolean($colName);
-                    break;
-                case 'json':
-                    $column = $table->json($colName);
-                    break;
-                case 'jsonb':
-                    $column = $table->jsonb($colName);
-                    break;
-                case 'uuid':
-                    $column = $table->uuid($colName);
-                    break;
-                case 'inet':
-                    $column = $table->ipAddress($colName);
-                    break;
-                case 'character varying':
-                case 'varchar':
-                    $maxLength = $columnInfo->character_maximum_length;
-                    if ($maxLength && $maxLength <= 255) {
-                        $column = $table->string($colName, $maxLength);
-                    } else {
-                        $column = $table->text($colName);
-                    }
-                    break;
-                case 'character':
-                case 'char':
-                    $maxLength = $columnInfo->character_maximum_length ?? 255;
-                    $column = $table->char($colName, $maxLength);
-                    break;
-                case 'text':
-                default:
+                case 'text': case 'ntext': case 'tinytext': case 'mediumtext': case 'longtext': case 'clob': case 'enum':
                     $column = $table->text($colName);
+                    break;
+
+                default: $column = $table->text($colName); break;
             }
+
+            if ($isNullable) { $column->nullable(); }
         } catch (\Exception $e) {
-            Log::warning("Failed to map column type for {$colName} ({$dataType}), falling back to text", ['error' => $e->getMessage()]);
-            $column = $table->text($colName);
-            if ($isNullable) {
-                $column->nullable();
-            }
+            Log::warning("Gagal memetakan tipe kolom {$colName} ({$dataType}), menggunakan tipe text", ['error' => $e->getMessage()]);
+            $fallbackColumn = $table->text($colName);
+            if ($isNullable) { $fallbackColumn->nullable(); }
         }
     }
-
-    private function createOptimalIndexes($tableName, $columns, $connectionName)
+    
+    private function createOptimalIndexes($connection, $tableName, $columns)
     {
+        $driver = $connection->getDriverName();
+        $concurrently = $driver === 'pgsql' ? 'CONCURRENTLY' : '';
+        
         try {
             foreach ($columns as $col) {
                 $colName = $col->column_name;
+                $dataType = strtolower($col->data_type);
+                $isDateType = in_array($dataType, ['date', 'timestamp', 'timestamptz', 'datetime', 'datetime2']);
+                $isNumericType = in_array($dataType, ['integer', 'bigint', 'numeric', 'decimal', 'real', 'double precision', 'int', 'smallint']);
 
-                if ($col->is_date_type) {
-                    DB::connection($connectionName)->statement("CREATE INDEX CONCURRENTLY IF NOT EXISTS \"idx_{$tableName}_{$colName}_date\" ON \"{$tableName}\" (\"{$colName}\")");
-                }
-                if ($col->is_numeric_type) {
-                    DB::connection($connectionName)->statement("CREATE INDEX CONCURRENTLY IF NOT EXISTS \"idx_{$tableName}_{$colName}_num\" ON \"{$tableName}\" (\"{$colName}\")");
+                if ($isDateType || $isNumericType) {
+                    $idxName = "idx_{$tableName}_{$colName}";
+                    $connection->statement("CREATE INDEX {$concurrently} IF NOT EXISTS \"{$idxName}\" ON \"{$tableName}\" (\"{$colName}\")");
                 }
             }
         } catch (\Exception $e) {
-            Log::warning("Failed to create indexes for table {$tableName}: " . $e->getMessage());
-        }
-    }
-
-    public function getWarehouseStats()
-    {
-        $warehouseConnection = $this->warehouseConnectionName;
-        try {
-            $warehouseTables = DB::connection($warehouseConnection)->select("
-                SELECT tablename as table_name, schemaname as schema_name
-                FROM pg_tables
-                WHERE schemaname = 'public' AND tablename LIKE '%__%'
-                ORDER BY tablename
-            ");
-
-            $stats = [];
-            foreach ($warehouseTables as $table) {
-                $tableName = $table->table_name;
-                $rowCount = DB::connection($warehouseConnection)->table($tableName)->count();
-                $columns = DB::connection($warehouseConnection)->select("
-                    SELECT COUNT(*) as total_columns,
-                           COUNT(CASE WHEN data_type IN ('date', 'timestamp', 'timestamptz', 'time') THEN 1 END) as date_columns,
-                           COUNT(CASE WHEN data_type IN ('integer', 'bigint', 'numeric', 'decimal', 'real', 'double precision') THEN 1 END) as numeric_columns
-                    FROM information_schema.columns
-                    WHERE table_name = ?
-                ", [$tableName]);
-
-                $stats[] = [
-                    'table_name' => $tableName,
-                    'connection_name' => explode('__', $tableName)[0],
-                    'source_table' => explode('__', $tableName)[1] ?? '',
-                    'row_count' => $rowCount,
-                    'total_columns' => $columns[0]->total_columns ?? 0,
-                    'date_columns' => $columns[0]->date_columns ?? 0,
-                    'numeric_columns' => $columns[0]->numeric_columns ?? 0
-                ];
-            }
-
-            return response()->json([
-                'status' => 'success',
-                'warehouse_stats' => $stats,
-                'summary' => [
-                    'total_tables' => count($stats),
-                    'total_rows' => collect($stats)->sum('row_count'),
-                    'connections' => collect($stats)->pluck('connection_name')->unique()->values()->toArray()
-                ]
-            ]);
-        } catch (\Exception $e) {
-            return response()->json(['status' => 'error', 'message' => 'Failed to get warehouse stats: ' . $e->getMessage()], 500);
+            Log::warning("Gagal membuat index untuk tabel {$tableName}: " . $e->getMessage());
         }
     }
 }
