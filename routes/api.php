@@ -1,12 +1,11 @@
 <?php
 
 use App\Http\Controllers\Api\ApiCanvasController;
-use App\Http\Controllers\Api\ApiConnectDatabaseController;
+use App\Http\Controllers\Api\ApiWarehouseReaderController;
 use App\Http\Controllers\Api\ApiETLController;
 use App\Http\Controllers\Api\ApiGetDataController;
 use App\Http\Controllers\Api\ApiVisualizationController;
 use App\Http\Controllers\Api\ApiOtentikasiController;
-use App\Http\Controllers\Api\ETLController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -27,14 +26,14 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::get('/columns/{table}', [ApiGetDataController::class, 'getTableColumns']);
     Route::post('/execute-query', [ApiGetDataController::class, 'executeQuery']);
 
-    Route::post('/fetch-database', [ApiConnectDatabaseController::class, 'connectDatasource']);
-    Route::get('/fetch-table/{id}', [ApiConnectDatabaseController::class, 'fetchTables']);
-    Route::get('/fetch-column/{table}', [ApiConnectDatabaseController::class, 'fetchTableColumns']);
+    Route::post('/fetch-database', [ApiWarehouseReaderController::class, 'connectDatasource']);
+    Route::get('/fetch-tables', [ApiWarehouseReaderController::class, 'fetchTables']);
+    Route::get('/fetch-column/{table}', [ApiWarehouseReaderController::class, 'fetchTableColumns']);
     
     Route::post('/fetch-data', [ApiGetDataController::class, 'getTableDataByColumns']);
     Route::post('/check-date', [ApiGetDataController::class, 'checkDateColumn']);
 
-    Route::post('/check-foreign-key', [ApiConnectDatabaseController::class, 'checkIfForeignKey']);
+    Route::post('/check-foreign-key', [ApiWarehouseReaderController::class, 'checkIfForeignKey']);
     Route::post('/visualisasi-data', [ApiGetDataController::class, 'getVisualisasiData']);
     Route::post('/convert-sql', [ApiVisualizationController::class, 'convertSql']);
     Route::post('/get-joinable-tables', [ApiGetDataController::class, 'getJoinableTables']);
@@ -54,7 +53,7 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::get('/project/{id_project}/canvases', [ApiCanvasController::class, 'getCanvasByProject']);
     Route::get('/first-canvas', [ApiCanvasController::class, 'getFirstCanvas']);
 
-    Route::post('/etl/run', [ApiETLController::class, 'run']);
+    Route::post('/etl/run', [ApiETLController::class, 'connectDatasource']);
     Route::post('/etl/refresh', [ApiETLController::class, 'refresh']);
     Route::post('/etl/full-refresh', [ApiETLController::class, 'fullRefresh']);
     Route::post('/etl/delete', [ApiETLController::class, 'delete']);
