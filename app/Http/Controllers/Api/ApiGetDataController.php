@@ -3,15 +3,14 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Datasource;
 use App\Models\Visualization;
-use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Database\Query\Expression;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Crypt;
 
 class ApiGetDataController extends Controller
 {
@@ -27,88 +26,115 @@ class ApiGetDataController extends Controller
         $connection = DB::connection($this->warehouseConnectionName);
         $schema = 'public';
 
-            // Metode 1: Cek foreign key formal (gold standard)
-            $formalFkQuery = "
-                SELECT
-                    tc.table_name AS referencing_table, kcu.column_name AS referencing_column,
-                    ccu.table_name AS referenced_table, ccu.column_name AS referenced_column
-                FROM information_schema.table_constraints AS tc
-                JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-                JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-                WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = ?
-                  AND ((lower(tc.table_name) = lower(?) AND lower(ccu.table_name) = lower(?)) OR (lower(tc.table_name) = lower(?) AND lower(ccu.table_name) = lower(?)))
-            ";
-            $formalForeignKey = $connection->selectOne($formalFkQuery, [$schema, $tableA, $tableB, $tableB, $tableA]);
-            if ($formalForeignKey) {
-                return $formalForeignKey;
-            }
-
-            // Metode 2 (FALLBACK): Cek relasi berdasarkan nama Primary Key
-            $schemaManager = Schema::connection($this->warehouseConnectionName);
-            $columnsA = array_map('strtolower', $schemaManager->getColumnListing($tableA));
-            $columnsB = array_map('strtolower', $schemaManager->getColumnListing($tableB));
-
-            // Cek 1: Apakah PK dari Tabel A ada sebagai kolom di Tabel B?
-            $pkOfA = $this->getPrimaryKeyForTable($tableA);
-            if ($pkOfA && in_array(strtolower($pkOfA), $columnsB)) {
-                $result = new \stdClass();
-                $result->referencing_table = $tableB;
-                $result->referencing_column = $pkOfA;
-                $result->referenced_table = $tableA;
-                $result->referenced_column = $pkOfA;
-                return $result;
-            }
-
-            // Cek 2: Apakah PK dari Tabel B ada sebagai kolom di Tabel A?
-            $pkOfB = $this->getPrimaryKeyForTable($tableB);
-            if ($pkOfB && in_array(strtolower($pkOfB), $columnsA)) {
-                $result = new \stdClass();
-                $result->referencing_table = $tableA;
-                $result->referencing_column = $pkOfB;
-                $result->referenced_table = $tableB;
-                $result->referenced_column = $pkOfB;
-                return $result;
-            }
-
-            return null;
-        } catch (\Exception $e) {
-            Log::error("Error finding foreign key between {$tableA} and {$tableB}: " . $e->getMessage());
-            return null;
+        $columnsResult = $connection->select("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position", [$schema]);
+        $tableColumns = [];
+        foreach ($columnsResult as $col) {
+            $tableColumns[strtolower($col->table_name)][] = strtolower($col->column_name);
         }
-    }
-    
-    public function getAllTables()
-    {
-        try {
-            $tables = DB::connection($this->warehouseConnectionName)->select("
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'public'
-            ");
-            $excludedTables = ['migrations', 'personal_access_tokens'];
-            $tableNames = array_filter(array_map(fn($table) => $table->table_name, $tables), fn($tableName) => !in_array($tableName, $excludedTables));
-            return response()->json(['success' => true, 'message' => 'Daftar tabel berhasil diambil dari data warehouse.', 'data' => array_values($tableNames)], 200);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan saat mengambil daftar tabel dari data warehouse.', 'error' => $e->getMessage()], 500);
+
+        $pkResult = $connection->select("SELECT tc.table_name, kcu.column_name FROM information_schema.table_constraints AS tc JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = ?", [$schema]);
+        $primaryKeys = [];
+        foreach ($pkResult as $pk) {
+            $primaryKeys[strtolower($pk->table_name)] = strtolower($pk->column_name);
         }
+
+        $fkResult = $connection->select("SELECT tc.table_name AS referencing_table, kcu.column_name AS referencing_column, ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.table_constraints AS tc JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = ?", [$schema]);
+
+        $this->schemaMetadata = [
+            'tableColumns' => $tableColumns,
+            'primaryKeys' => $primaryKeys,
+            'foreignKeys' => array_map(function ($fk) {
+                $fk->referencing_table = strtolower($fk->referencing_table);
+                $fk->referencing_column = strtolower($fk->referencing_column);
+                $fk->referenced_table = strtolower($fk->referenced_table);
+                $fk->referenced_column = strtolower($fk->referenced_column);
+                return $fk;
+            }, $fkResult)
+        ];
+
+        return $this->schemaMetadata;
     }
 
-    public function getTableColumns($table)
+    private function getForeignKey($tableA, $tableB, $metadata)
     {
-        try {
-            $connection = DB::connection($this->warehouseConnectionName);
-            $tableExists = $connection->select("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?", [$table]);
-            if (empty($tableExists)) {
-                return response()->json(['success' => false, 'message' => "Tabel '{$table}' tidak ditemukan di data warehouse."], 404);
+        $tableA = strtolower($tableA);
+        $tableB = strtolower($tableB);
+
+        foreach ($metadata['foreignKeys'] as $fk) {
+            if (($fk->referencing_table === $tableA && $fk->referenced_table === $tableB) ||
+                ($fk->referencing_table === $tableB && $fk->referenced_table === $tableA)
+            ) {
+                return $fk;
             }
-            $columns = $connection->select("SELECT column_name, data_type, is_nullable, ordinal_position FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?", [$table]);
-            $formattedColumns = array_map(function ($column) {
-                return ['id' => $column->ordinal_position, 'name' => $column->column_name, 'type' => $column->data_type, 'nullable' => $column->is_nullable === 'YES'];
-            }, $columns);
-            return response()->json(['success' => true, 'message' => "Daftar kolom berhasil diambil dari tabel '{$table}'.", 'data' => $formattedColumns], 200);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan saat mengambil daftar kolom.', 'error' => $e->getMessage()], 500);
         }
+
+        $pkOfA = $metadata['primaryKeys'][$tableA] ?? null;
+        if ($pkOfA && isset($metadata['tableColumns'][$tableB]) && in_array($pkOfA, $metadata['tableColumns'][$tableB])) {
+            return (object) [
+                'referencing_table' => $tableB,
+                'referencing_column' => $pkOfA,
+                'referenced_table' => $tableA,
+                'referenced_column' => $pkOfA
+            ];
+        }
+
+        $pkOfB = $metadata['primaryKeys'][$tableB] ?? null;
+        if ($pkOfB && isset($metadata['tableColumns'][$tableA]) && in_array($pkOfB, $metadata['tableColumns'][$tableA])) {
+            return (object) [
+                'referencing_table' => $tableA,
+                'referencing_column' => $pkOfB,
+                'referenced_table' => $tableB,
+                'referenced_column' => $pkOfB
+            ];
+        }
+
+        return null;
+    }
+
+    public function getJoinableTables(Request $request)
+    {
+        $validated = $request->validate(['existing_tables' => 'present|array']);
+        $existingTables = array_unique($validated['existing_tables']);
+
+        $metadata = $this->_getSchemaMetadata();
+        $allTablesInWarehouse = array_keys($metadata['tableColumns']);
+
+        if (empty($existingTables)) {
+            return response()->json(['success' => true, 'data' => $allTablesInWarehouse]);
+        }
+
+        $lastSelectedTable = Arr::last($existingTables);
+        if (!$lastSelectedTable) {
+            return response()->json(['success' => true, 'data' => $allTablesInWarehouse]);
+        }
+
+        $joinableTables = [];
+        foreach ($allTablesInWarehouse as $candidateTable) {
+            if (strtolower($candidateTable) === strtolower($lastSelectedTable)) continue;
+
+            if ($this->getForeignKey($lastSelectedTable, $candidateTable, $metadata)) {
+                $joinableTables[] = $candidateTable;
+            }
+        }
+
+        $finalList = array_unique(array_merge($existingTables, $joinableTables));
+
+        $lastTablePrefix = explode('__', $lastSelectedTable)[0];
+
+        usort($finalList, function ($a, $b) use ($lastTablePrefix, $lastSelectedTable) {
+            if ($a === $lastSelectedTable) return 1;
+            if ($b === $lastSelectedTable) return -1;
+
+            $aMatchesPrefix = (explode('__', $a)[0] === $lastTablePrefix);
+            $bMatchesPrefix = (explode('__', $b)[0] === $lastTablePrefix);
+
+            if ($aMatchesPrefix && !$bMatchesPrefix) return -1;
+            if (!$aMatchesPrefix && $bMatchesPrefix) return 1;
+
+            return strcasecmp($a, $b);
+        });
+
+        return response()->json(['success' => true, 'data' => $finalList]);
     }
 
     public function getTableDataByColumns(Request $request)
@@ -123,6 +149,7 @@ class ApiGetDataController extends Controller
             $userInputDimensi = $request->input('dimensi', []);
             $metriks = $request->input('metriks', []);
             $tabelJoin = $request->input('tabel_join', []);
+            $metadata = null;
 
             $previousTable = $table;
             if (!empty($tabelJoin)) {
@@ -146,14 +173,18 @@ class ApiGetDataController extends Controller
                 }
             }
 
-            // Sisa kode tidak perlu diubah
             $filters = $request->input('filters', []);
             $granularity = $request->input('granularity');
             $dateFilterDetails = $request->input('date_filter_details');
             $topN = $request->input('topN');
             $topNMetric = $request->input('topN_metric');
             $displayFormat = $request->input('display_format', 'auto');
-            $selects = []; $groupBy = []; $orderBy = []; $rawGroupByExpressions = [];
+            $sortBy = $request->input('sortBy');
+            $orderByDirection = $request->input('orderBy', 'asc');
+            $selects = [];
+            $groupBy = [];
+            $orderBy = [];
+            $rawGroupByExpressions = [];
             $granularityDateColumn = null;
             if ($granularity && $granularity !== 'asis' && $dateFilterDetails && isset($dateFilterDetails['column'])) {
                 $granularityDateColumn = $dateFilterDetails['column'];
@@ -221,8 +252,16 @@ class ApiGetDataController extends Controller
             $hasAggregations = false;
             if (!empty($metriks)) {
                 foreach ($metriks as $metrikColumn) {
-                    $parts = explode('|', $metrikColumn); $columnName = $parts[0]; $aggregationType = isset($parts[1]) ? strtoupper($parts[1]) : 'COUNT'; $hasAggregations = true;
-                    $columnAliasBase = str_replace(['.', '*'], ['_', 'all'], $columnName); $columnAliasBase = preg_replace('/[^a-zA-Z0-9_]/', '', $columnAliasBase);
+                    $parts = explode('|', $metrikColumn);
+                    $columnName = $parts[0];
+                    $aggregationType = isset($parts[1]) ? strtoupper($parts[1]) : 'COUNT';
+                    $hasAggregations = true;
+
+                    $columnParts = explode('.', $columnName);
+                    $justTheColumnName = end($columnParts);
+                    $columnAliasBase = str_replace('*', 'all', $justTheColumnName);
+                    $columnAliasBase = preg_replace('/[^a-zA-Z0-9_]/', '', $columnAliasBase);
+
                     switch ($aggregationType) {
                         case 'SUM':
                             $selects[] = DB::raw("SUM({$columnName}) AS sum_{$columnAliasBase}");
@@ -253,13 +292,31 @@ class ApiGetDataController extends Controller
                 $query->select($selects);
             }
             $this->applyFilters($query, $filters);
-            if (!empty($groupBy) || !empty($rawGroupByExpressions)) { foreach ($groupBy as $gbItem) { $query->groupBy($gbItem); } foreach ($rawGroupByExpressions as $gbExpr) { $query->groupBy($gbExpr); } } elseif ($hasAggregations && !empty($userInputDimensi)) { foreach ($userInputDimensi as $gbItem) { $query->groupBy($gbItem); } }
-            if (!empty($orderBy)) { foreach ($orderBy as $obItem) { if ($obItem instanceof Expression) { $query->orderByRaw($obItem->getValue($connection->getQueryGrammar())); } else { $parts = explode(' ', $obItem); $query->orderBy($parts[0], $parts[1] ?? 'asc'); } } } elseif (empty($orderBy) && $hasAggregations && !empty($userInputDimensi)) { $query->orderBy($userInputDimensi[0], 'asc'); }
+            if (!empty($groupBy) || !empty($rawGroupByExpressions)) {
+                foreach ($groupBy as $gbItem) {
+                    $query->groupBy($gbItem);
+                }
+                foreach ($rawGroupByExpressions as $gbExpr) {
+                    $query->groupBy($gbExpr);
+                }
+            } elseif ($hasAggregations && !empty($userInputDimensi)) {
+                foreach ($userInputDimensi as $gbItem) {
+                    $query->groupBy($gbItem);
+                }
+            }
+
             if ($topN && is_numeric($topN) && $topN > 0 && $hasAggregations) {
                 $orderByMetric = $topNMetric ?? ($metriks[0] ?? null);
                 if ($orderByMetric) {
-                    $parts = explode('|', $orderByMetric); $columnName = $parts[0]; $aggregationType = isset($parts[1]) ? strtoupper($parts[1]) : 'COUNT';
-                    $columnAliasBase = str_replace(['.', '*'], ['_', 'all'], $columnName); $columnAliasBase = preg_replace('/[^a-zA-Z0-9_]/', '', $columnAliasBase);
+                    $parts = explode('|', $orderByMetric);
+                    $columnName = $parts[0];
+                    $aggregationType = isset($parts[1]) ? strtoupper($parts[1]) : 'COUNT';
+
+                    $columnParts = explode('.', $columnName);
+                    $justTheColumnName = end($columnParts);
+                    $columnAliasBase = str_replace('*', 'all', $justTheColumnName);
+                    $columnAliasBase = preg_replace('/[^a-zA-Z0-9_]/', '', $columnAliasBase);
+
                     $orderColumn = '';
                     switch ($aggregationType) {
                         case 'SUM':
@@ -284,28 +341,28 @@ class ApiGetDataController extends Controller
                 }
                 $query->limit((int)$topN);
             } else if (!empty($sortBy)) {
-                $query->orders = null; 
+                $query->orders = null;
                 $query->orderBy($sortBy, $orderByDirection);
-            } else if (!empty($orderBy)) { 
-                foreach ($orderBy as $obItem) { 
-                    if ($obItem instanceof Expression) { 
-                        $query->orderByRaw($obItem->getValue($connection->getQueryGrammar())); 
-                    } else { 
-                        $parts = explode(' ', $obItem); 
-                        $query->orderBy($parts[0], $parts[1] ?? 'asc'); 
-                    } 
-                } 
-            } elseif (empty($orderBy) && $hasAggregations && !empty($userInputDimensi)) { 
-                $query->orderBy($userInputDimensi[0], 'asc'); 
+            } else if (!empty($orderBy)) {
+                foreach ($orderBy as $obItem) {
+                    if ($obItem instanceof Expression) {
+                        $query->orderByRaw($obItem->getValue($connection->getQueryGrammar()));
+                    } else {
+                        $parts = explode(' ', $obItem);
+                        $query->orderBy($parts[0], $parts[1] ?? 'asc');
+                    }
+                }
+            } elseif (empty($orderBy) && $hasAggregations && !empty($userInputDimensi)) {
+                $query->orderBy($userInputDimensi[0], 'asc');
             }
-            
+
             $sqlForDebug = vsprintf(str_replace(['%', '?'], ['%%', "'%s'"], $query->toSql()), $query->getBindings());
             $data = $query->get();
             return response()->json(['success' => true, 'message' => 'Data berhasil di-query.', 'data' => $data, 'query' => $sqlForDebug], 200);
-
         } catch (\Exception $e) {
-            Log::error("Error in getTableDataByColumns: " . $e->getMessage() . " Stack: " . $e->getTraceAsString() . (isset($sqlForDebug) ? " SQL: " . $sqlForDebug : ""));
-            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan saat mengambil data: ' . $e->getMessage(), 'error_detail' => $e->getMessage(), 'query_attempted' => isset($sqlForDebug) ? $sqlForDebug : 'Query not fully built or error before build'], 500);
+            $sqlForDebug = isset($sqlForDebug) ? $sqlForDebug : 'Query not fully built or error before build';
+            Log::error("Error in getTableDataByColumns: " . $e->getMessage() . " Stack: " . $e->getTraceAsString() . " SQL: " . $sqlForDebug);
+            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan saat mengambil data: ' . $e->getMessage(), 'error_detail' => $e->getMessage(), 'query_attempted' => $sqlForDebug], 500);
         }
     }
 
@@ -327,46 +384,53 @@ class ApiGetDataController extends Controller
 
     public function getTableColumns($table)
     {
-        $validated = $request->validate([
-            'existing_tables' => 'present|array'
-        ]);
-        
-        $existingTables = array_unique($validated['existing_tables']);
-
-        $allTablesInWarehouse = array_map(fn($table) => $table->table_name, DB::connection($this->warehouseConnectionName)->select("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"));
-
-        if (empty($existingTables)) {
-            return response()->json(['success' => true, 'data' => $allTablesInWarehouse]);
-        }
-
-        $joinableTables = [];
-        foreach ($allTablesInWarehouse as $candidateTable) {
-            if (in_array($candidateTable, $existingTables)) {
-                $joinableTables[] = $candidateTable;
-                continue;
+        try {
+            $connection = DB::connection($this->warehouseConnectionName);
+            $tableExists = $connection->select("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?", [$table]);
+            if (empty($tableExists)) {
+                return response()->json(['success' => false, 'message' => "Tabel '{$table}' tidak ditemukan di data warehouse."], 404);
             }
-
-            foreach ($existingTables as $existingTable) {
-                if ($this->getForeignKey($candidateTable, $existingTable)) {
-                    $joinableTables[] = $candidateTable;
-                    break; 
-                }
-            }
+            $columns = $connection->select("SELECT column_name, data_type, is_nullable, ordinal_position FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?", [$table]);
+            $formattedColumns = array_map(function ($column) {
+                return ['id' => $column->ordinal_position, 'name' => $column->column_name, 'type' => $column->data_type, 'nullable' => $column->is_nullable === 'YES'];
+            }, $columns);
+            return response()->json(['success' => true, 'message' => "Daftar kolom berhasil diambil dari tabel '{$table}'.", 'data' => $formattedColumns], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan saat mengambil daftar kolom.', 'error' => $e->getMessage()], 500);
         }
-        
-        return response()->json(['success' => true, 'data' => array_unique($joinableTables)]);
+    }
+
+    private function getConnectionDetails($idDatasource)
+    {
+        $datasource = Datasource::findOrFail($idDatasource);
+        return [
+            'driver' => $datasource->type,
+            'host' => $datasource->host,
+            'port' => $datasource->port,
+            'database' => $datasource->database_name,
+            'username' => $datasource->username,
+            'password' => Crypt::decrypt($datasource->password),
+            'charset' => 'utf8',
+            'prefix' => '',
+            'schema' => 'public',
+        ];
     }
 
     public function executeQuery(Request $request)
     {
         try {
-            $query = $request->input('query');
-            if (empty($query)) return response()->json(['success' => false, 'message' => 'Query SQL tidak boleh kosong.'], 400);
-            $idDatasource = 1;
-            $dbConfig = $this->getConnectionDetails($idDatasource);
-            config(["database.connections.dynamic" => $dbConfig]);
-            $connection = DB::connection('dynamic');
-            $result = $connection->select($query);
+            $validated = $request->validate([
+                'query' => 'required|string',
+                'id_datasource' => 'required|integer|exists:datasources,id_datasource',
+            ]);
+
+            $dbConfig = $this->getConnectionDetails($validated['id_datasource']);
+            $connectionName = "dynamic_exec_{$validated['id_datasource']}";
+            config(["database.connections.{$connectionName}" => $dbConfig]);
+            $connection = DB::connection($connectionName);
+
+            $result = $connection->select($validated['query']);
+
             return response()->json(['success' => true, 'message' => 'Query berhasil dijalankan.', 'data' => $result], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Terjadi kesalahan saat menjalankan query.', 'error' => $e->getMessage()], 500);
@@ -407,64 +471,48 @@ class ApiGetDataController extends Controller
     public function checkDateColumn(Request $request)
     {
         try {
-            $request->validate([
+            $validated = $request->validate([
                 'tabel' => 'required|string',
                 'kolom' => 'required|string',
             ]);
 
-            $table = $request->input('tabel');
-            $column = $request->input('kolom');
+            $tableWithPrefix = $validated['tabel'];
+            $column = $validated['kolom'];
 
-            $idDatasource = 1;
-            $dbConfig = $this->getConnectionDetails($idDatasource);
-
-            config(['database.connections.dynamic' => $dbConfig]);
-            $connection = DB::connection('dynamic');
-
-            $tableExists = $connection->select("
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_name = ?
-            ", [$table]);
-
-            if (empty($tableExists)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => "Tabel '{$table}' tidak ditemukan.",
-                ], 404);
+            if (strpos($tableWithPrefix, '__') === false) {
+                return response()->json(['success' => false, 'message' => 'Nama tabel tidak valid, harus mengandung prefix.'], 400);
             }
 
-            $columns = $connection->select("
-                SELECT column_name, data_type
-                FROM information_schema.columns
-                WHERE table_name = ?
-            ", [$table]);
+            list($prefix, $originalTableName) = explode('__', $tableWithPrefix, 2);
+            $datasource = Datasource::where('name', $prefix)->where('is_deleted', false)->firstOrFail();
+
+            $dbConfig = $this->getConnectionDetails($datasource->id_datasource);
+            $connectionName = "dynamic_check_{$datasource->id_datasource}";
+            config(["database.connections.{$connectionName}" => $dbConfig]);
+            $connection = DB::connection($connectionName);
+
+            $tableExists = $connection->select("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?", [$originalTableName]);
+            if (empty($tableExists)) {
+                return response()->json(['success' => false, 'message' => "Tabel '{$originalTableName}' tidak ditemukan di datasource '{$prefix}'."], 404);
+            }
+
+            $columns = $connection->select("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ?", [$originalTableName]);
 
             $dateColumns = [];
-
             foreach ($columns as $col) {
                 $colName = $col->column_name;
                 $dataType = strtolower($col->data_type);
 
-                if (
-                    $colName !== $column &&
-                    in_array($dataType, ['date', 'timestamp', 'timestamp without time zone', 'timestamp with time zone'])
-                ) {
+                if ($colName !== $column && in_array($dataType, ['date', 'timestamp', 'timestamp without time zone', 'timestamp with time zone'])) {
                     $dateColumns[] = $colName;
                 }
             }
 
-            return response()->json([
-                'success' => true,
-                'has_date_column' => count($dateColumns) > 0,
-                'date_columns' => $dateColumns
-            ], 200);
+            return response()->json(['success' => true, 'has_date_column' => count($dateColumns) > 0, 'date_columns' => $dateColumns], 200);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['success' => false, 'message' => 'Datasource tidak ditemukan untuk tabel yang diberikan.'], 404);
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Terjadi kesalahan saat memeriksa kolom tanggal.',
-                'error' => $e->getMessage(),
-            ], 500);
+            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan saat memeriksa kolom tanggal.', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -594,19 +642,6 @@ class ApiGetDataController extends Controller
                 }
 
                 $visualization->update($updateData);
-
-                $logMessage = $isPositionUpdate ?
-                    'visualization position/size updated' :
-                    'visualization fully updated';
-
-                Log::info($logMessage, [
-                    'visualization_id' => $visualization->id,
-                    'name' => $visualization->name,
-                    'position_x' => $visualization->position_x,
-                    'position_y' => $visualization->position_y,
-                    'width' => $visualization->width,
-                    'height' => $visualization->height
-                ]);
             } else {
                 $visualization = Visualization::create([
                     'id_canvas' => $validated['id_canvas'],
@@ -624,12 +659,6 @@ class ApiGetDataController extends Controller
                     'created_by' => 1,
                     'modified_by' => 1,
                 ]);
-
-                Log::info('New visualization created', [
-                    'visualization_id' => $visualization->id,
-                    'name' => $visualization->name,
-                    'visualization_type' => $visualization->visualization_type
-                ]);
             }
 
             return response()->json([
@@ -638,22 +667,10 @@ class ApiGetDataController extends Controller
                 'data' => $visualization
             ], 200);
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validasi gagal',
-                'errors' => $e->errors()
-            ], 422);
+            return response()->json(['success' => false, 'message' => 'Validasi gagal', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
-            Log::error('Error saving visualization: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString(),
-                'request' => $request->all()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Terjadi kesalahan saat menyimpan visualization',
-                'error' => $e->getMessage()
-            ], 500);
+            Log::error('Error saving visualization: ' . $e->getMessage(), ['trace' => $e->getTraceAsString(), 'request' => $request->all()]);
+            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan saat menyimpan visualization', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -670,210 +687,157 @@ class ApiGetDataController extends Controller
                 ->first();
 
             if (!$visualization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Visualisasi tidak ditemukan'
-                ], 404);
+                return response()->json(['success' => false, 'message' => 'Visualisasi tidak ditemukan'], 404);
             }
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Data posisi visualization berhasil diambil',
-                'data' => [
-                    'width' => $visualization->width,
-                    'height' => $visualization->height,
-                    'position_x' => $visualization->position_x,
-                    'position_y' => $visualization->position_y
-                ]
-            ], 200);
+            return response()->json(['success' => true, 'message' => 'Data posisi visualization berhasil diambil', 'data' => ['width' => $visualization->width, 'height' => $visualization->height, 'position_x' => $visualization->position_x, 'position_y' => $visualization->position_y]], 200);
         } catch (\Exception $e) {
-            Log::error('Error retrieving visualization position: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString(),
-                'request' => $request->all()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Terjadi kesalahan saat mengambil data posisi visualization',
-                'error' => $e->getMessage()
-            ], 500);
+            Log::error('Error retrieving visualization position: ' . $e->getMessage(), ['trace' => $e->getTraceAsString(), 'request' => $request->all()]);
+            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan saat mengambil data posisi visualization', 'error' => $e->getMessage()], 500);
         }
     }
 
     public function getVisualisasiData(Request $request)
     {
         try {
-            $query = $request->input('query');
+            $validated = $request->validate([
+                'query' => 'required|string',
+                'id_datasource' => 'required|integer|exists:datasources,id_datasource',
+            ]);
 
-            if (empty($query)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Query SQL tidak boleh kosong.',
-                ], 400);
-            }
+            $dbConfig = $this->getConnectionDetails($validated['id_datasource']);
+            $connectionName = "dynamic_viz_{$validated['id_datasource']}";
+            config(["database.connections.{$connectionName}" => $dbConfig]);
+            $connection = DB::connection($connectionName);
 
-            $idDatasource = 1;
-            $dbConfig = $this->getConnectionDetails($idDatasource);
-
-            config(["database.connections.dynamic" => $dbConfig]);
-            $connection = DB::connection('dynamic');
-
-            $rawResults = $connection->select($query);
+            $rawResults = $connection->select($validated['query']);
 
             if (empty($rawResults)) {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Query berhasil dijalankan, namun tidak ada data.',
-                    'data' => [],
-                ], 200);
+                return response()->json(['success' => true, 'message' => 'Query berhasil dijalankan, namun tidak ada data.', 'data' => []], 200);
             }
 
-        // Deteksi struktur data dan format sesuai kebutuhan
-        $formattedData = $this->formatVisualizationData($rawResults);
+            $formattedData = $this->formatVisualizationData($rawResults);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Query berhasil dijalankan.',
-            'data' => $formattedData,
-        ], 200);
-        
-    } catch (\Exception $e) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Terjadi kesalahan saat menjalankan query.',
-            'error' => $e->getMessage(),
-        ], 500);
-    }
-}
-
-private function formatVisualizationData($rawResults)
-{
-    $firstRow = (array)$rawResults[0];
-    $columns = array_keys($firstRow);
-    
-    // Deteksi apakah ada kolom numerik (untuk menentukan jenis data)
-    $numericColumns = [];
-    $dateColumns = [];
-    
-    foreach ($columns as $column) {
-        $sampleValue = $firstRow[$column];
-        if (is_numeric($sampleValue)) {
-            $numericColumns[] = $column;
-        } elseif ($this->isDateColumn($column, $sampleValue)) {
-            $dateColumns[] = $column;
+            return response()->json(['success' => true, 'message' => 'Query berhasil dijalankan.', 'data' => $formattedData], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan saat menjalankan query.', 'error' => $e->getMessage()], 500);
         }
     }
-    
-    return collect($rawResults)->map(function ($row) use ($columns, $numericColumns, $dateColumns) {
-        $formattedRow = [];
-        
-        foreach ((array) $row as $key => $value) {
-            if (in_array($key, $numericColumns)) {
-                // Kolom numerik - pastikan format angka konsisten
-                $formattedRow[$key] = is_null($value) || $value === '' || $value === 'null'
-                    ? 0
-                    : (is_numeric($value) ? floatval($value) : 0);
-            } elseif (in_array($key, $dateColumns)) {
-                // Kolom tanggal - standardisasi format
-                $formattedRow[$key] = $this->standardizeDateFormat($value);
-            } else {
-                // Kolom non-numerik - bersihkan dan standardisasi
-                if (is_null($value) || trim($value) === '' || strtolower(trim($value)) === 'null') {
-                    $formattedRow[$key] = 'Tidak Diketahui';
+
+    private function formatVisualizationData($rawResults)
+    {
+        $firstRow = (array)$rawResults[0];
+        $columns = array_keys($firstRow);
+
+        $numericColumns = [];
+        $dateColumns = [];
+
+        foreach ($columns as $column) {
+            $sampleValue = $firstRow[$column];
+            if (is_numeric($sampleValue)) {
+                $numericColumns[] = $column;
+            } elseif ($this->isDateColumn($column, $sampleValue)) {
+                $dateColumns[] = $column;
+            }
+        }
+
+        return collect($rawResults)->map(function ($row) use ($columns, $numericColumns, $dateColumns) {
+            $formattedRow = [];
+
+            foreach ((array)$row as $key => $value) {
+                if (in_array($key, $numericColumns)) {
+                    $formattedRow[$key] = is_null($value) || $value === '' || $value === 'null'
+                        ? 0
+                        : (is_numeric($value) ? floatval($value) : 0);
+                } elseif (in_array($key, $dateColumns)) {
+                    $formattedRow[$key] = $this->standardizeDateFormat($value);
                 } else {
-                    $formattedRow[$key] = trim($value);
+                    if (is_null($value) || trim($value) === '' || strtolower(trim($value)) === 'null') {
+                        $formattedRow[$key] = 'Tidak Diketahui';
+                    } else {
+                        $formattedRow[$key] = trim($value);
+                    }
                 }
             }
-        }
-        
-        return $formattedRow;
-    })->toArray();
-}
 
-// Tambahan method untuk deteksi kolom tanggal
-private function isDateColumn($columnName, $sampleValue)
-{
-    // Deteksi berdasarkan nama kolom
-    $dateKeywords = ['date', 'tanggal', 'period', 'month', 'year', 'week', 'quarter', 'time'];
-    $columnLower = strtolower($columnName);
-    
-    foreach ($dateKeywords as $keyword) {
-        if (strpos($columnLower, $keyword) !== false) {
-            return true;
-        }
+            return $formattedRow;
+        })->toArray();
     }
-    
-    // Deteksi berdasarkan format nilai
-    if (is_string($sampleValue)) {
-        // Cek berbagai pola tanggal
-        $patterns = [
-            '/^\d{4}-\d{1,2}$/',           // 2024-12
-            '/^\d{1,2}-\d{4}$/',           // 12-2024  
-            '/^[A-Za-z]+-\d{2,4}$/',       // December-24
-            '/^Week\s+\d+\s+\d{4}$/i',     // Week 1 2024
-            '/^Q\d\s+\d{4}$/i',            // Q1 2024
-            '/^\d{4}-\d{2}-\d{2}$/',       // 2024-12-01
-        ];
-        
-        foreach ($patterns as $pattern) {
-            if (preg_match($pattern, trim($sampleValue))) {
+
+    private function isDateColumn($columnName, $sampleValue)
+    {
+        $dateKeywords = ['date', 'tanggal', 'period', 'month', 'year', 'week', 'quarter', 'time'];
+        $columnLower = strtolower($columnName);
+
+        foreach ($dateKeywords as $keyword) {
+            if (strpos($columnLower, $keyword) !== false) {
                 return true;
             }
         }
-    }
-    
-    return false;
-}
 
-// Method untuk standardisasi format tanggal (opsional - untuk konsistensi)
-private function standardizeDateFormat($dateValue)
-{
-    if (is_null($dateValue) || trim($dateValue) === '') {
-        return 'Tidak Diketahui';
-    }
-    
-    $value = trim($dateValue);
-    
-    // Jika sudah dalam format yang diinginkan, kembalikan apa adanya
-    // Atau lakukan konversi sesuai kebutuhan
-    
-    return $value;
-}
+        if (is_string($sampleValue)) {
+            $patterns = [
+                '/^\d{4}-\d{1,2}$/',
+                '/^\d{1,2}-\d{4}$/',
+                '/^[A-Za-z]+-\d{2,4}$/',
+                '/^Week\s+\d+\s+\d{4}$/i',
+                '/^Q\d\s+\d{4}$/i',
+                '/^\d{4}-\d{2}-\d{2}$/',
+            ];
 
-// Tambahan: Method untuk memberikan hint struktur data (opsional)
-private function analyzeDataStructure($data)
-{
-    if (empty($data)) return null;
-    
-    $firstRow = (array)$data[0];
-    $columns = array_keys($firstRow);
-    $numericColumns = [];
-    $textColumns = [];
-    
-    foreach ($columns as $column) {
-        $sampleValue = $firstRow[$column];
-        if (is_numeric($sampleValue)) {
-            $numericColumns[] = $column;
-        } else {
-            $textColumns[] = $column;
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, trim($sampleValue))) {
+                    return true;
+                }
+            }
         }
+
+        return false;
     }
-    
-    $structure = [
-        'total_columns' => count($columns),
-        'numeric_columns' => $numericColumns,
-        'text_columns' => $textColumns,
-        'suggested_type' => 'simple' // default
-    ];
-    
-    // Jika ada 3+ kolom dengan 1+ numerik dan 2+ text, kemungkinan grouped data
-    if (count($columns) >= 3 && count($numericColumns) >= 1 && count($textColumns) >= 2) {
-        $structure['suggested_type'] = 'grouped';
-        $structure['suggested_label'] = $textColumns[0];
-        $structure['suggested_category'] = $textColumns[1] ?? null;
-        $structure['suggested_value'] = end($numericColumns);
+
+    private function standardizeDateFormat($dateValue)
+    {
+        if (is_null($dateValue) || trim($dateValue) === '') {
+            return 'Tidak Diketahui';
+        }
+
+        $value = trim($dateValue);
+
+        return $value;
     }
-    
-    return $structure;
-}
+
+    private function analyzeDataStructure($data)
+    {
+        if (empty($data)) return null;
+
+        $firstRow = (array)$data[0];
+        $columns = array_keys($firstRow);
+        $numericColumns = [];
+        $textColumns = [];
+
+        foreach ($columns as $column) {
+            $sampleValue = $firstRow[$column];
+            if (is_numeric($sampleValue)) {
+                $numericColumns[] = $column;
+            } else {
+                $textColumns[] = $column;
+            }
+        }
+
+        $structure = [
+            'total_columns' => count($columns),
+            'numeric_columns' => $numericColumns,
+            'text_columns' => $textColumns,
+            'suggested_type' => 'simple'
+        ];
+
+        if (count($columns) >= 3 && count($numericColumns) >= 1 && count($textColumns) >= 2) {
+            $structure['suggested_type'] = 'grouped';
+            $structure['suggested_label'] = $textColumns[0];
+            $structure['suggested_category'] = $textColumns[1] ?? null;
+            $structure['suggested_value'] = end($numericColumns);
+        }
+
+        return $structure;
+    }
 }
