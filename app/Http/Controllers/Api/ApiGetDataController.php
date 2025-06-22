@@ -175,6 +175,8 @@ class ApiGetDataController extends Controller
             $topN = $request->input('topN');
             $topNMetric = $request->input('topN_metric');
             $displayFormat = $request->input('display_format', 'auto');
+            $sortBy = $request->input('sortBy');
+            $orderByDirection = $request->input('orderBy', 'asc');
             $selects = []; $groupBy = []; $orderBy = []; $rawGroupByExpressions = [];
             $granularityDateColumn = null;
             if ($granularity && $granularity !== 'asis' && $dateFilterDetails && isset($dateFilterDetails['column'])) {
@@ -200,7 +202,17 @@ class ApiGetDataController extends Controller
             if (!empty($metriks)) {
                 foreach ($metriks as $metrikColumn) {
                     $parts = explode('|', $metrikColumn); $columnName = $parts[0]; $aggregationType = isset($parts[1]) ? strtoupper($parts[1]) : 'COUNT'; $hasAggregations = true;
-                    $columnAliasBase = str_replace(['.', '*'], ['_', 'all'], $columnName); $columnAliasBase = preg_replace('/[^a-zA-Z0-9_]/', '', $columnAliasBase);
+                    
+                    // =================== KODE YANG DIPERBAIKI ===================
+                    // Ambil hanya nama kolom saja, tanpa nama tabel, untuk membuat alias
+                    $columnParts = explode('.', $columnName);
+                    $justTheColumnName = end($columnParts); // Ini akan mengambil "id_pendaftar" dari "tabel.id_pendaftar"
+                    
+                    // Gunakan nama kolom yang sudah bersih untuk basis alias
+                    $columnAliasBase = str_replace('*', 'all', $justTheColumnName); 
+                    $columnAliasBase = preg_replace('/[^a-zA-Z0-9_]/', '', $columnAliasBase);
+                    // ================= END OF PERBAIKAN ===================
+
                     switch ($aggregationType) {
                         case 'SUM': $selects[] = DB::raw("SUM({$columnName}) AS sum_{$columnAliasBase}"); break;
                         case 'AVERAGE': $selects[] = DB::raw("AVG({$columnName}) AS avg_{$columnAliasBase}"); break;
@@ -213,12 +225,19 @@ class ApiGetDataController extends Controller
             if (empty($selects)) { $query->selectRaw("1 AS placeholder_if_no_selects_error"); } else { $query->select($selects); }
             $this->applyFilters($query, $filters);
             if (!empty($groupBy) || !empty($rawGroupByExpressions)) { foreach ($groupBy as $gbItem) { $query->groupBy($gbItem); } foreach ($rawGroupByExpressions as $gbExpr) { $query->groupBy($gbExpr); } } elseif ($hasAggregations && !empty($userInputDimensi)) { foreach ($userInputDimensi as $gbItem) { $query->groupBy($gbItem); } }
-            if (!empty($orderBy)) { foreach ($orderBy as $obItem) { if ($obItem instanceof Expression) { $query->orderByRaw($obItem->getValue($connection->getQueryGrammar())); } else { $parts = explode(' ', $obItem); $query->orderBy($parts[0], $parts[1] ?? 'asc'); } } } elseif (empty($orderBy) && $hasAggregations && !empty($userInputDimensi)) { $query->orderBy($userInputDimensi[0], 'asc'); }
+            
             if ($topN && is_numeric($topN) && $topN > 0 && $hasAggregations) {
                 $orderByMetric = $topNMetric ?? ($metriks[0] ?? null);
                 if ($orderByMetric) {
                     $parts = explode('|', $orderByMetric); $columnName = $parts[0]; $aggregationType = isset($parts[1]) ? strtoupper($parts[1]) : 'COUNT';
-                    $columnAliasBase = str_replace(['.', '*'], ['_', 'all'], $columnName); $columnAliasBase = preg_replace('/[^a-zA-Z0-9_]/', '', $columnAliasBase);
+                    
+                    // =================== KODE YANG DIPERBAIKI (UNTUK TOP N) ===================
+                    $columnParts = explode('.', $columnName);
+                    $justTheColumnName = end($columnParts);
+                    $columnAliasBase = str_replace('*', 'all', $justTheColumnName);
+                    $columnAliasBase = preg_replace('/[^a-zA-Z0-9_]/', '', $columnAliasBase);
+                    // ================= END OF PERBAIKAN ===================
+
                     $orderColumn = '';
                     switch ($aggregationType) {
                         case 'SUM': $orderColumn = "sum_{$columnAliasBase}"; break;
@@ -230,7 +249,22 @@ class ApiGetDataController extends Controller
                     $query->orders = null; $query->orderBy($orderColumn, 'DESC');
                 }
                 $query->limit((int)$topN);
+            } else if (!empty($sortBy)) {
+                $query->orders = null; 
+                $query->orderBy($sortBy, $orderByDirection);
+            } else if (!empty($orderBy)) { 
+                foreach ($orderBy as $obItem) { 
+                    if ($obItem instanceof Expression) { 
+                        $query->orderByRaw($obItem->getValue($connection->getQueryGrammar())); 
+                    } else { 
+                        $parts = explode(' ', $obItem); 
+                        $query->orderBy($parts[0], $parts[1] ?? 'asc'); 
+                    } 
+                } 
+            } elseif (empty($orderBy) && $hasAggregations && !empty($userInputDimensi)) { 
+                $query->orderBy($userInputDimensi[0], 'asc'); 
             }
+            
             $sqlForDebug = vsprintf(str_replace(['%', '?'], ['%%', "'%s'"], $query->toSql()), $query->getBindings());
             $data = $query->get();
             return response()->json(['success' => true, 'message' => 'Data berhasil di-query.', 'data' => $data, 'query' => $sqlForDebug], 200);
@@ -340,15 +374,12 @@ class ApiGetDataController extends Controller
             $table = $request->input('tabel');
             $column = $request->input('kolom');
 
-            // Ambil koneksi dari datasource (contoh: datasource ID 1)
             $idDatasource = 1;
             $dbConfig = $this->getConnectionDetails($idDatasource);
 
-            // Set koneksi dinamis
             config(['database.connections.dynamic' => $dbConfig]);
             $connection = DB::connection('dynamic');
 
-            // Cek apakah tabel ada
             $tableExists = $connection->select("
                 SELECT table_name
                 FROM information_schema.tables
@@ -362,7 +393,6 @@ class ApiGetDataController extends Controller
                 ], 404);
             }
 
-            // Cek semua kolom di tabel
             $columns = $connection->select("
                 SELECT column_name, data_type
                 FROM information_schema.columns
@@ -397,9 +427,6 @@ class ApiGetDataController extends Controller
         }
     }
 
-    /**
-     * Membuat WHERE clause untuk debugging query SQL
-     */
     public function buildWhereClause($filters)
     {
         try {
@@ -412,7 +439,7 @@ class ApiGetDataController extends Controller
                 $column = $filter['column'] ?? null;
                 $operator = strtoupper($filter['operator'] ?? '=');
                 $value = $filter['value'] ?? null;
-                $logic = strtoupper($filter['logic'] ?? 'AND'); // AND atau OR
+                $logic = strtoupper($filter['logic'] ?? 'AND');
                 $mode = strtoupper($filter['mode'] ?? 'INCLUDE');
 
                 if (!$column || $value === null) {
@@ -443,7 +470,6 @@ class ApiGetDataController extends Controller
     public function saveVisualization(Request $request)
     {
         try {
-            // Validate basic fields
             $validated = $request->validate([
                 'id_canvas' => 'required|integer',
                 'id_datasource' => 'required|integer',
@@ -457,10 +483,8 @@ class ApiGetDataController extends Controller
                 'position_y' => 'nullable',
             ]);
 
-            // Extract and prepare config data
             $config = $request->input('config', []);
 
-            // Ensure all config values are properly captured
             $visualizationConfig = [
                 'colors' => $config['colors'] ?? ['#4CAF50', '#FF9800', '#2196F3'],
                 'backgroundColor' => $config['backgroundColor'] ?? '#ffffff',
@@ -478,27 +502,23 @@ class ApiGetDataController extends Controller
                 'yAxisFontFamily' => $config['yAxisFontFamily'] ?? 'Arial',
             ];
 
-            // If visualizationOptions exists in config, merge it with our visualizationConfig
             if (isset($config['visualizationOptions']) && is_array($config['visualizationOptions'])) {
                 $visualizationConfig['visualizationOptions'] = $config['visualizationOptions'];
             }
 
-            // Try to find existing visualization first by canvas ID and query
             $visualization = Visualization::where('id_canvas', $validated['id_canvas'])
                 ->where('query', $validated['query'])
                 ->first();
 
-            // Check if this is a position/size update only
             $isPositionUpdate = $request->has('position_x') || $request->has('position_y') ||
                 $request->has('width') || $request->has('height');
 
             if ($visualization) {
                 $updateData = [
-                    'modified_by' => 1, // Replace with auth user ID
+                    'modified_by' => 1,
                     'modified_time' => now(),
                 ];
 
-                // Only update these fields if explicitly provided
                 if ($request->has('id_datasource')) {
                     $updateData['id_datasource'] = $validated['id_datasource'];
                 }
@@ -511,13 +531,11 @@ class ApiGetDataController extends Controller
                     $updateData['visualization_type'] = $validated['visualization_type'];
                 }
 
-                // If this is not just a position update, update the config and query
                 if (!$isPositionUpdate) {
                     $updateData['config'] = $visualizationConfig;
                     $updateData['query'] = $validated['query'];
                 }
 
-                // Always update position and size if provided
                 if ($request->has('width')) {
                     $updateData['width'] = $validated['width'];
                 }
@@ -536,7 +554,6 @@ class ApiGetDataController extends Controller
 
                 $visualization->update($updateData);
 
-                // Log the operation type
                 $logMessage = $isPositionUpdate ?
                     'visualization position/size updated' :
                     'visualization fully updated';
@@ -550,7 +567,6 @@ class ApiGetDataController extends Controller
                     'height' => $visualization->height
                 ]);
             } else {
-                // Create new visualization with all data
                 $visualization = Visualization::create([
                     'id_canvas' => $validated['id_canvas'],
                     'id_datasource' => $validated['id_datasource'],
@@ -564,8 +580,8 @@ class ApiGetDataController extends Controller
                     'position_y' => $validated['position_y'] ?? 0,
                     'created_time' => now(),
                     'modified_time' => now(),
-                    'created_by' => 1, // Replace with auth user ID
-                    'modified_by' => 1, // Replace with auth user ID
+                    'created_by' => 1,
+                    'modified_by' => 1,
                 ]);
 
                 Log::info('New visualization created', [
@@ -600,24 +616,14 @@ class ApiGetDataController extends Controller
         }
     }
 
-    // Add this new API endpoint to your controller
-
-    /**
-     * Retrieve visualization position data
-     * 
-     * @param Request $request
-     * @return \Illuminate\Http\JsonResponse
-     */
     public function getvisualizationPosition(Request $request)
     {
         try {
-            // Validate request
             $validated = $request->validate([
                 'query' => 'required|string',
                 'visualization_type' => 'required|string',
             ]);
 
-            // Find visualization by query and visualization type
             $visualization = Visualization::where('query', $validated['query'])
                 ->where('visualization_type', $validated['visualization_type'])
                 ->first();
@@ -629,7 +635,6 @@ class ApiGetDataController extends Controller
                 ], 404);
             }
 
-            // Return visualization position data
             return response()->json([
                 'success' => true,
                 'message' => 'Data posisi visualization berhasil diambil',
@@ -654,242 +659,165 @@ class ApiGetDataController extends Controller
         }
     }
 
-
-
-    // public function getVisualisasiData(Request $request)
-    // {
-    //     try {
-    //         $idDatasource = 1;
-    //         $dbConfig = $this->getConnectionDetails($idDatasource);
-    //         config(["database.connections.dynamic" => $dbConfig]);
-    //         $connection = DB::connection('dynamic');
-
-    //         $table = $request->input('tabel');
-    //         $dimensi = $request->input('dimensi', []);
-    //         $metriks = $request->input('metriks', []);
-    //         $tabelJoin = $request->input('tabel_join', []);
-    //         $filters = $request->input('filters', []);
-
-    //         $query = $connection->table($table);
-    //         $previousTable = $table;
-
-    //         foreach ($tabelJoin as $join) {
-    //             $joinTable = $join['tabel'];
-    //             $joinType = strtoupper($join['join_type']);
-    //             $foreignKey = $this->getForeignKey($previousTable, $joinTable);
-
-    //             if ($foreignKey) {
-    //                 $query->join(
-    //                     $joinTable,
-    //                     "{$previousTable}.{$foreignKey->foreign_column}",
-    //                     '=',
-    //                     "{$joinTable}.{$foreignKey->referenced_column}",
-    //                     $joinType
-    //                 );
-    //             }
-    //             $previousTable = $joinTable;
-    //         }
-
-    //         $query->select(DB::raw(implode(', ', $dimensi)));
-    //         foreach ($metriks as $metriksColumn) {
-    //             $columnName = last(explode('.', $metriksColumn));
-    //             $query->addSelect(DB::raw("COUNT(DISTINCT {$metriksColumn}) AS total_{$columnName}"));
-    //         }
-
-    //         $query->groupBy($dimensi);
-    //         $query = $this->applyFilters($query, $filters);
-
-    //         $data = $query->get();
-
-    //         return response()->json([
-    //             'success' => true,
-    //             'data' => $data,
-    //             'labels' => $dimensi,
-    //             'series' => $metriks,
-    //         ]);
-    //     } catch (\Exception $e) {
-    //         return response()->json([
-    //             'success' => false,
-    //             'message' => 'Error visualisasi data',
-    //             'error' => $e->getMessage()
-    //         ], 500);
-    //     }
-    // }
-
     public function getVisualisasiData(Request $request)
-{
-    try {
-        $query = $request->input('query');
+    {
+        try {
+            $query = $request->input('query');
 
-        if (empty($query)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Query SQL tidak boleh kosong.',
-            ], 400);
-        }
+            if (empty($query)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Query SQL tidak boleh kosong.',
+                ], 400);
+            }
 
-        $idDatasource = 1;
-        $dbConfig = $this->getConnectionDetails($idDatasource);
+            $idDatasource = 1;
+            $dbConfig = $this->getConnectionDetails($idDatasource);
 
-        config(["database.connections.dynamic" => $dbConfig]);
-        $connection = DB::connection('dynamic');
+            config(["database.connections.dynamic" => $dbConfig]);
+            $connection = DB::connection('dynamic');
 
-        $rawResults = $connection->select($query);
+            $rawResults = $connection->select($query);
 
-        if (empty($rawResults)) {
+            if (empty($rawResults)) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Query berhasil dijalankan, namun tidak ada data.',
+                    'data' => [],
+                ], 200);
+            }
+
+            $formattedData = $this->formatVisualizationData($rawResults);
+
             return response()->json([
                 'success' => true,
-                'message' => 'Query berhasil dijalankan, namun tidak ada data.',
-                'data' => [],
+                'message' => 'Query berhasil dijalankan.',
+                'data' => $formattedData,
             ], 200);
-        }
-
-        // Deteksi struktur data dan format sesuai kebutuhan
-        $formattedData = $this->formatVisualizationData($rawResults);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Query berhasil dijalankan.',
-            'data' => $formattedData,
-        ], 200);
-        
-    } catch (\Exception $e) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Terjadi kesalahan saat menjalankan query.',
-            'error' => $e->getMessage(),
-        ], 500);
-    }
-}
-
-private function formatVisualizationData($rawResults)
-{
-    $firstRow = (array)$rawResults[0];
-    $columns = array_keys($firstRow);
-    
-    // Deteksi apakah ada kolom numerik (untuk menentukan jenis data)
-    $numericColumns = [];
-    $dateColumns = [];
-    
-    foreach ($columns as $column) {
-        $sampleValue = $firstRow[$column];
-        if (is_numeric($sampleValue)) {
-            $numericColumns[] = $column;
-        } elseif ($this->isDateColumn($column, $sampleValue)) {
-            $dateColumns[] = $column;
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat menjalankan query.',
+                'error' => $e->getMessage(),
+            ], 500);
         }
     }
-    
-    return collect($rawResults)->map(function ($row) use ($columns, $numericColumns, $dateColumns) {
-        $formattedRow = [];
+
+    private function formatVisualizationData($rawResults)
+    {
+        $firstRow = (array)$rawResults[0];
+        $columns = array_keys($firstRow);
         
-        foreach ((array) $row as $key => $value) {
-            if (in_array($key, $numericColumns)) {
-                // Kolom numerik - pastikan format angka konsisten
-                $formattedRow[$key] = is_null($value) || $value === '' || $value === 'null'
-                    ? 0
-                    : (is_numeric($value) ? floatval($value) : 0);
-            } elseif (in_array($key, $dateColumns)) {
-                // Kolom tanggal - standardisasi format
-                $formattedRow[$key] = $this->standardizeDateFormat($value);
-            } else {
-                // Kolom non-numerik - bersihkan dan standardisasi
-                if (is_null($value) || trim($value) === '' || strtolower(trim($value)) === 'null') {
-                    $formattedRow[$key] = 'Tidak Diketahui';
+        $numericColumns = [];
+        $dateColumns = [];
+        
+        foreach ($columns as $column) {
+            $sampleValue = $firstRow[$column];
+            if (is_numeric($sampleValue)) {
+                $numericColumns[] = $column;
+            } elseif ($this->isDateColumn($column, $sampleValue)) {
+                $dateColumns[] = $column;
+            }
+        }
+        
+        return collect($rawResults)->map(function ($row) use ($columns, $numericColumns, $dateColumns) {
+            $formattedRow = [];
+            
+            foreach ((array) $row as $key => $value) {
+                if (in_array($key, $numericColumns)) {
+                    $formattedRow[$key] = is_null($value) || $value === '' || $value === 'null'
+                        ? 0
+                        : (is_numeric($value) ? floatval($value) : 0);
+                } elseif (in_array($key, $dateColumns)) {
+                    $formattedRow[$key] = $this->standardizeDateFormat($value);
                 } else {
-                    $formattedRow[$key] = trim($value);
+                    if (is_null($value) || trim($value) === '' || strtolower(trim($value)) === 'null') {
+                        $formattedRow[$key] = 'Tidak Diketahui';
+                    } else {
+                        $formattedRow[$key] = trim($value);
+                    }
+                }
+            }
+            
+            return $formattedRow;
+        })->toArray();
+    }
+
+    private function isDateColumn($columnName, $sampleValue)
+    {
+        $dateKeywords = ['date', 'tanggal', 'period', 'month', 'year', 'week', 'quarter', 'time'];
+        $columnLower = strtolower($columnName);
+        
+        foreach ($dateKeywords as $keyword) {
+            if (strpos($columnLower, $keyword) !== false) {
+                return true;
+            }
+        }
+        
+        if (is_string($sampleValue)) {
+            $patterns = [
+                '/^\d{4}-\d{1,2}$/',
+                '/^\d{1,2}-\d{4}$/',
+                '/^[A-Za-z]+-\d{2,4}$/',
+                '/^Week\s+\d+\s+\d{4}$/i',
+                '/^Q\d\s+\d{4}$/i',
+                '/^\d{4}-\d{2}-\d{2}$/',
+            ];
+            
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, trim($sampleValue))) {
+                    return true;
                 }
             }
         }
         
-        return $formattedRow;
-    })->toArray();
-}
-
-// Tambahan method untuk deteksi kolom tanggal
-private function isDateColumn($columnName, $sampleValue)
-{
-    // Deteksi berdasarkan nama kolom
-    $dateKeywords = ['date', 'tanggal', 'period', 'month', 'year', 'week', 'quarter', 'time'];
-    $columnLower = strtolower($columnName);
-    
-    foreach ($dateKeywords as $keyword) {
-        if (strpos($columnLower, $keyword) !== false) {
-            return true;
-        }
+        return false;
     }
-    
-    // Deteksi berdasarkan format nilai
-    if (is_string($sampleValue)) {
-        // Cek berbagai pola tanggal
-        $patterns = [
-            '/^\d{4}-\d{1,2}$/',           // 2024-12
-            '/^\d{1,2}-\d{4}$/',           // 12-2024  
-            '/^[A-Za-z]+-\d{2,4}$/',       // December-24
-            '/^Week\s+\d+\s+\d{4}$/i',     // Week 1 2024
-            '/^Q\d\s+\d{4}$/i',            // Q1 2024
-            '/^\d{4}-\d{2}-\d{2}$/',       // 2024-12-01
-        ];
+
+    private function standardizeDateFormat($dateValue)
+    {
+        if (is_null($dateValue) || trim($dateValue) === '') {
+            return 'Tidak Diketahui';
+        }
         
-        foreach ($patterns as $pattern) {
-            if (preg_match($pattern, trim($sampleValue))) {
-                return true;
+        $value = trim($dateValue);
+        
+        return $value;
+    }
+
+    private function analyzeDataStructure($data)
+    {
+        if (empty($data)) return null;
+        
+        $firstRow = (array)$data[0];
+        $columns = array_keys($firstRow);
+        $numericColumns = [];
+        $textColumns = [];
+        
+        foreach ($columns as $column) {
+            $sampleValue = $firstRow[$column];
+            if (is_numeric($sampleValue)) {
+                $numericColumns[] = $column;
+            } else {
+                $textColumns[] = $column;
             }
         }
-    }
-    
-    return false;
-}
-
-// Method untuk standardisasi format tanggal (opsional - untuk konsistensi)
-private function standardizeDateFormat($dateValue)
-{
-    if (is_null($dateValue) || trim($dateValue) === '') {
-        return 'Tidak Diketahui';
-    }
-    
-    $value = trim($dateValue);
-    
-    // Jika sudah dalam format yang diinginkan, kembalikan apa adanya
-    // Atau lakukan konversi sesuai kebutuhan
-    
-    return $value;
-}
-
-// Tambahan: Method untuk memberikan hint struktur data (opsional)
-private function analyzeDataStructure($data)
-{
-    if (empty($data)) return null;
-    
-    $firstRow = (array)$data[0];
-    $columns = array_keys($firstRow);
-    $numericColumns = [];
-    $textColumns = [];
-    
-    foreach ($columns as $column) {
-        $sampleValue = $firstRow[$column];
-        if (is_numeric($sampleValue)) {
-            $numericColumns[] = $column;
-        } else {
-            $textColumns[] = $column;
+        
+        $structure = [
+            'total_columns' => count($columns),
+            'numeric_columns' => $numericColumns,
+            'text_columns' => $textColumns,
+            'suggested_type' => 'simple'
+        ];
+        
+        if (count($columns) >= 3 && count($numericColumns) >= 1 && count($textColumns) >= 2) {
+            $structure['suggested_type'] = 'grouped';
+            $structure['suggested_label'] = $textColumns[0];
+            $structure['suggested_category'] = $textColumns[1] ?? null;
+            $structure['suggested_value'] = end($numericColumns);
         }
+        
+        return $structure;
     }
-    
-    $structure = [
-        'total_columns' => count($columns),
-        'numeric_columns' => $numericColumns,
-        'text_columns' => $textColumns,
-        'suggested_type' => 'simple' // default
-    ];
-    
-    // Jika ada 3+ kolom dengan 1+ numerik dan 2+ text, kemungkinan grouped data
-    if (count($columns) >= 3 && count($numericColumns) >= 1 && count($textColumns) >= 2) {
-        $structure['suggested_type'] = 'grouped';
-        $structure['suggested_label'] = $textColumns[0];
-        $structure['suggested_category'] = $textColumns[1] ?? null;
-        $structure['suggested_value'] = end($numericColumns);
-    }
-    
-    return $structure;
-}
 }
