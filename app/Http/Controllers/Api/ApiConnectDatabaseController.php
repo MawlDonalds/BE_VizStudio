@@ -35,7 +35,7 @@ class ApiConnectDatabaseController extends Controller
                 'database_name' => $request->database_name,
                 'username'      => $request->username,
                 'password'      => $request->password,
-                'created_by'    => 1, //auth()->id(),
+                'created_by'    => $request->createdBy || 1,
                 'created_time'  => now(),
                 'is_deleted'    => 0
             ]);

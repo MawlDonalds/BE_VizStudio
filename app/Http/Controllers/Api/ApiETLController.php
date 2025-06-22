@@ -13,8 +13,8 @@ use Illuminate\Support\Facades\Log;
 class ApiETLController extends Controller
 {
     private $warehouseConnectionName;
-    private $batchSize = 1000; // Batch size for bulk operations
-    private $chunkSize = 5000; // Chunk size for reading data
+    private $batchSize = 1000;
+    private $chunkSize = 5000;
 
     public function __construct()
     {
@@ -92,15 +92,12 @@ class ApiETLController extends Controller
                     continue;
                 }
 
-                // Disable constraints for faster refresh
                 $this->disableConstraints($warehouseConnection, $warehouseTable);
 
                 DB::connection($warehouseConnection)->table($warehouseTable)->truncate();
 
-                // High-speed bulk refresh
                 $totalRows = $this->bulkRefreshTable($sourceConnection, $warehouseConnection, $tableName, $warehouseTable);
 
-                // Re-enable constraints
                 $this->enableConstraints($warehouseConnection, $warehouseTable);
 
                 $refreshedTables[] = [
@@ -137,7 +134,6 @@ class ApiETLController extends Controller
 
         $connectionName = $validated['connection_name'];
 
-        // Drop all old tables from this connection
         $tablesToDrop = DB::connection($this->warehouseConnectionName)->select("
             SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE ?
         ", ["{$connectionName}__%"]);
@@ -147,6 +143,40 @@ class ApiETLController extends Controller
         }
 
         return $this->performEtlProcess($validated);
+    }
+
+    public function delete(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'connection_name' => 'required|string|alpha_dash'
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'validation_error', 'errors' => $e->errors()], 422);
+        }
+
+        $connectionName = $validated['connection_name'];
+        $droppedTables = [];
+
+        try {
+            $tablesToDrop = DB::connection($this->warehouseConnectionName)->select("
+                SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE ?
+            ", ["{$connectionName}__%"]);
+
+            foreach ($tablesToDrop as $table) {
+                Schema::connection($this->warehouseConnectionName)->dropIfExists($table->tablename);
+                $droppedTables[] = $table->tablename;
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => "Datasource '{$connectionName}' and its associated tables have been deleted from the warehouse.",
+                'deleted_tables' => $droppedTables,
+                'deleted_count' => count($droppedTables)
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['status' => 'error', 'message' => 'Delete failed: ' . $e->getMessage()], 500);
+        }
     }
 
     private function performEtlProcess(array $validated)
@@ -167,7 +197,6 @@ class ApiETLController extends Controller
         $warehouseConnection = $this->warehouseConnectionName;
 
         try {
-            // Optimize connection settings for bulk operations
             $this->optimizeConnections($sourceConnection, $warehouseConnection);
 
             DB::connection($sourceConnection)->getPdo();
@@ -193,22 +222,16 @@ class ApiETLController extends Controller
                 $primaryKeyColumns = $this->getPrimaryKeyColumns($sourceConnection, $tableName);
                 $warehouseTable = $sourceConnection . '__' . $tableName;
 
-                // Create table structure
                 Schema::connection($warehouseConnection)->create($warehouseTable, function (Blueprint $table) use ($columns, $primaryKeyColumns) {
                     foreach ($columns as $col) {
                         $this->addColumnWithProperType($table, $col);
                     }
                     $table->timestamp('_etl_created_at')->default(DB::raw('CURRENT_TIMESTAMP'));
                     $table->timestamp('_etl_updated_at')->default(DB::raw('CURRENT_TIMESTAMP'));
-
-                    // Don't create primary key initially for faster bulk insert
-                    // We'll add it after data insertion
                 });
 
-                // High-speed bulk data transfer
                 $totalRows = $this->bulkTransferData($sourceConnection, $warehouseConnection, $tableName, $warehouseTable, collect($columns)->pluck('column_name')->toArray());
 
-                // Add primary key and indexes after data insertion
                 $this->addConstraintsAndIndexes($warehouseConnection, $warehouseTable, $primaryKeyColumns, $columns);
 
                 $endTime = microtime(true);
@@ -244,17 +267,12 @@ class ApiETLController extends Controller
         }
     }
 
-    /**
-     * Optimize database connections for bulk operations
-     */
     private function optimizeConnections($sourceConnection, $warehouseConnection)
     {
         try {
-            // Source connection optimizations
             DB::connection($sourceConnection)->statement("SET work_mem = '256MB'");
             DB::connection($sourceConnection)->statement("SET maintenance_work_mem = '512MB'");
 
-            // Warehouse connection optimizations for bulk operations
             DB::connection($warehouseConnection)->statement("SET synchronous_commit = OFF");
             DB::connection($warehouseConnection)->statement("SET wal_buffers = '16MB'");
             DB::connection($warehouseConnection)->statement("SET checkpoint_completion_target = 0.9");
@@ -266,21 +284,16 @@ class ApiETLController extends Controller
         }
     }
 
-    /**
-     * High-speed bulk data transfer using COPY-like approach
-     */
     private function bulkTransferData($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable, $columnNames)
     {
         $totalRows = 0;
         $currentTime = now();
 
-        // Disable autocommit and constraints for maximum speed
         $this->disableConstraints($warehouseConnection, $warehouseTable);
 
         try {
             DB::connection($warehouseConnection)->beginTransaction();
 
-            // Use chunked processing for memory efficiency
             DB::connection($sourceConnection)
                 ->table($sourceTable)
                 ->orderBy($columnNames[0] ?? 'id')
@@ -297,7 +310,6 @@ class ApiETLController extends Controller
 
                         $batchData[] = $insertData;
 
-                        // Insert in batches for optimal performance
                         if (count($batchData) >= $this->batchSize) {
                             DB::connection($warehouseConnection)->table($warehouseTable)->insert($batchData);
                             $totalRows += count($batchData);
@@ -305,7 +317,6 @@ class ApiETLController extends Controller
                         }
                     }
 
-                    // Insert remaining data
                     if (!empty($batchData)) {
                         DB::connection($warehouseConnection)->table($warehouseTable)->insert($batchData);
                         $totalRows += count($batchData);
@@ -323,63 +334,44 @@ class ApiETLController extends Controller
         return $totalRows;
     }
 
-    /**
-     * Bulk refresh using optimized approach
-     */
     private function bulkRefreshTable($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable)
     {
         $columnNames = Schema::connection($sourceConnection)->getColumnListing($sourceTable);
         return $this->bulkTransferData($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable, $columnNames);
     }
 
-    /**
-     * Disable constraints for faster bulk operations
-     */
     private function disableConstraints($connectionName, $tableName)
     {
         try {
-            // Disable triggers and constraints
             DB::connection($connectionName)->statement("ALTER TABLE \"{$tableName}\" DISABLE TRIGGER ALL");
         } catch (\Exception $e) {
             Log::warning("Failed to disable constraints for {$tableName}: " . $e->getMessage());
         }
     }
 
-    /**
-     * Re-enable constraints after bulk operations
-     */
     private function enableConstraints($connectionName, $tableName)
     {
         try {
-            // Re-enable triggers and constraints
             DB::connection($connectionName)->statement("ALTER TABLE \"{$tableName}\" ENABLE TRIGGER ALL");
         } catch (\Exception $e) {
             Log::warning("Failed to enable constraints for {$tableName}: " . $e->getMessage());
         }
     }
 
-    /**
-     * Add primary key and indexes after bulk data insertion
-     */
     private function addConstraintsAndIndexes($connectionName, $tableName, $primaryKeyColumns, $columns)
     {
         try {
-            // Add primary key if exists
             if (!empty($primaryKeyColumns)) {
                 $pkColumns = implode('", "', $primaryKeyColumns);
                 DB::connection($connectionName)->statement("ALTER TABLE \"{$tableName}\" ADD PRIMARY KEY (\"{$pkColumns}\")");
             }
 
-            // Create optimal indexes
             $this->createOptimalIndexes($tableName, $columns, $connectionName);
         } catch (\Exception $e) {
             Log::warning("Failed to add constraints/indexes for {$tableName}: " . $e->getMessage());
         }
     }
 
-    /**
-     * Get primary key columns for a table (supports composite keys)
-     */
     private function getPrimaryKeyColumns($connectionName, $tableName)
     {
         $pkQuery = "
@@ -518,9 +510,6 @@ class ApiETLController extends Controller
                 default:
                     $column = $table->text($colName);
             }
-            if ($isNullable) {
-                $column->nullable();
-            }
         } catch (\Exception $e) {
             Log::warning("Failed to map column type for {$colName} ({$dataType}), falling back to text", ['error' => $e->getMessage()]);
             $column = $table->text($colName);
@@ -536,7 +525,6 @@ class ApiETLController extends Controller
             foreach ($columns as $col) {
                 $colName = $col->column_name;
 
-                // Create indexes for date and numeric columns for better query performance
                 if ($col->is_date_type) {
                     DB::connection($connectionName)->statement("CREATE INDEX CONCURRENTLY IF NOT EXISTS \"idx_{$tableName}_{$colName}_date\" ON \"{$tableName}\" (\"{$colName}\")");
                 }

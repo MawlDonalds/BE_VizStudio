@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ApiOtentikasiController extends Controller
 {
@@ -191,7 +192,7 @@ class ApiOtentikasiController extends Controller
             $validator = Validator::make($request->all(), [
                 'id_user' => 'required|integer|exists:users,id_user',
                 'id_project' => 'required|integer',
-                'access' => 'required|string|in:view,edit,admn,none',
+                'access' => 'required|string|in:view,edit,admin,none',
                 'created_by' => 'required|string|exists:users,name',
                 'modified_by' => 'required|string|exists:users,name',
             ]);
@@ -230,7 +231,8 @@ class ApiOtentikasiController extends Controller
                         ->where('id_project', $projectId)
                         ->update([
                             'access' => $access,
-                            'modified_time' => now()
+                            'modified_time' => now(),
+                            'modified_by' => $modifiedBy
                         ]);
                 } else {
                     // Insert record baru

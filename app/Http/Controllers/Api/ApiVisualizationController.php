@@ -112,6 +112,8 @@ class ApiVisualizationController extends Controller
                 'position_x' => 'nullable',
                 'position_y' => 'nullable',
                 'builder_payload' => 'nullable|array',
+                'created_by' => 'nullable',
+                'modified_by' => 'nullable',
             ]);
 
             // Extract and prepare config data
@@ -251,6 +253,10 @@ class ApiVisualizationController extends Controller
                     $updateData['builder_payload'] = $validated['builder_payload'];
                 }
 
+                if ($request->has('modified_by')) {
+                    $updateData['modified_by'] = $validated['modified_by'];
+                }
+
                 $visualization->update($updateData);
 
                 $visualization->update($updateData);
@@ -291,8 +297,8 @@ class ApiVisualizationController extends Controller
                     'position_y' => $validated['position_y'] ?? 0,
                     'created_time' => now(),
                     'modified_time' => now(),
-                    'created_by' => 1, // Replace with auth user ID
-                    'modified_by' => 1, // Replace with auth user ID
+                    'created_by' => $validated['created_by'] ?? 0, 
+                    'modified_by' => $validated['modified_by'] ?? 0,// Replace with auth user ID
                     'builder_payload' => $validated['builder_payload'] ?? null,
                 ]);
 
