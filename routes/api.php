@@ -22,8 +22,8 @@ Route::prefix('otentikasi')->group(function () {
 });
 
 Route::prefix('kelola-dashboard')->group(function () {
-    Route::get('/tables', [ApiGetDataController::class, 'getAllTables']);
-    Route::get('/columns/{table}', [ApiGetDataController::class, 'getTableColumns']);
+    // Route::get('/tables', [ApiGetDataController::class, 'getAllTables']);
+    // Route::get('/columns/{table}', [ApiGetDataController::class, 'getTableColumns']);
     Route::post('/execute-query', [ApiGetDataController::class, 'executeQuery']);
 
     Route::post('/fetch-database', [ApiWarehouseReaderController::class, 'connectDatasource']);

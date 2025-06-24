@@ -24,6 +24,22 @@ class ApiETLController extends Controller
         $this->warehouseConnectionName = 'pgsql2';
     }
 
+    private function getDatasourceConnectionConfig(string $connectionName): array
+    {
+        $datasource = Datasource::where('name', $connectionName)->where('is_deleted', false)->firstOrFail();
+        
+        return [
+            'driver'   => $datasource->type,
+            'host'     => $datasource->host,
+            'port'     => $datasource->port,
+            'database' => $datasource->database_name,
+            'username' => $datasource->username,
+            'password' => $datasource->password,
+            'charset'  => 'utf8',
+            'prefix'   => '',
+        ];
+    }
+
     public function connectDatasource(Request $request)
     {
         $warehouseConnection = $this->warehouseConnectionName;
@@ -54,27 +70,14 @@ class ApiETLController extends Controller
 
     public function refresh(Request $request)
     {
-        $warehouseConnection = DB::connection($this->warehouseConnectionName);
-
-        try {
-            $validated = $request->validate([
-                'driver' => 'required|string|in:pgsql,mysql,sqlsrv',
-                'host' => 'required|string', 'port' => 'required|numeric',
-                'database' => 'required|string', 'username' => 'required|string',
-                'password' => 'required|string', 'connection_name' => 'required|string|alpha_dash'
-            ]);
-        } catch (ValidationException $e) {
-            return response()->json(['status' => 'validation_error', 'errors' => $e->errors()], 422);
-        }
-
+        $validated = $request->validate(['connection_name' => 'required|string|alpha_dash']);
         $sourceConnectionName = $validated['connection_name'];
-        config(["database.connections.{$sourceConnectionName}" => [
-            'driver' => $validated['driver'], 'host' => $validated['host'], 'port' => $validated['port'],
-            'database' => $validated['database'], 'username' => $validated['username'],
-            'password' => $validated['password'], 'charset' => 'utf8', 'prefix' => '',
-        ]]);
 
         try {
+            $connectionConfig = $this->getDatasourceConnectionConfig($sourceConnectionName);
+            config(["database.connections.{$sourceConnectionName}" => $connectionConfig]);
+
+            $warehouseConnection = DB::connection($this->warehouseConnectionName);
             $sourceConnection = DB::connection($sourceConnectionName);
             $schema = $this->getSourceSchema($sourceConnection);
             $tables = $this->getSourceTables($sourceConnection, $schema);
@@ -114,28 +117,26 @@ class ApiETLController extends Controller
 
     public function fullRefresh(Request $request)
     {
-        try {
-            $validated = $request->validate([
-                'id_project' => 'nullable|integer',
-                'driver' => 'required|string|in:pgsql,mysql,sqlsrv',
-                'host' => 'required|string', 'port' => 'required|numeric',
-                'database' => 'required|string', 'username' => 'required|string',
-                'password' => 'required|string', 'connection_name' => 'required|string|alpha_dash'
-            ]);
-        } catch (ValidationException $e) {
-            return response()->json(['status' => 'validation_error', 'errors' => $e->errors()], 422);
-        }
-
+        $validated = $request->validate(['connection_name' => 'required|string|alpha_dash']);
         $connectionName = $validated['connection_name'];
-        $tablesToDrop = DB::connection($this->warehouseConnectionName)->select("
-            SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE ?
-        ", ["{$connectionName}__%"]);
 
-        foreach ($tablesToDrop as $table) {
-            Schema::connection($this->warehouseConnectionName)->dropIfExists($table->tablename);
+        try {
+            $connectionConfig = $this->getDatasourceConnectionConfig($connectionName);
+            
+            $tablesToDrop = DB::connection($this->warehouseConnectionName)->select("
+                SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE ?
+            ", ["{$connectionName}__%"]);
+
+            foreach ($tablesToDrop as $table) {
+                Schema::connection($this->warehouseConnectionName)->dropIfExists($table->tablename);
+            }
+            
+            $etlPayload = array_merge($connectionConfig, ['connection_name' => $connectionName]);
+            return $this->performEtlProcess($etlPayload);
+
+        } catch (\Exception $e) {
+            return response()->json(['status' => 'error', 'message' => 'Full Refresh gagal: ' . $e->getMessage()], 500);
         }
-
-        return $this->performEtlProcess($validated);
     }
 
     public function delete(Request $request)
@@ -244,7 +245,7 @@ class ApiETLController extends Controller
                 'port'            => $validated['port'],
                 'database_name'   => $validated['database'],
                 'username'        => $validated['username'],
-                'password'        => Crypt::encryptString($validated['password']),
+                'password'        => $validated['password'],
                 'modified_by'     => Auth::id() ?? 1,
                 'modified_time'   => now(),
                 'is_deleted'      => false
@@ -478,36 +479,28 @@ class ApiETLController extends Controller
                 case 'smallint': case 'int2': $column = $table->smallInteger($colName); break;
                 case 'tinyint': $column = $table->tinyInteger($colName); break;
                 case 'mediumint': $column = $table->mediumInteger($colName); break;
-
                 case 'numeric': case 'decimal': case 'dec':
                     $precision = $columnInfo->numeric_precision ?? 18;
                     $scale = $columnInfo->numeric_scale ?? 2;
                     $column = $table->decimal($colName, $precision, $scale);
                     break;
                 case 'money': case 'smallmoney': $column = $table->decimal($colName, 19, 4); break;
-                
                 case 'real': case 'float4': $column = $table->float($colName); break;
                 case 'float': $column = $table->float($colName); break;
                 case 'double precision': case 'float8': case 'double': $column = $table->double($colName); break;
-
                 case 'date': $column = $table->date($colName); break;
                 case 'time': case 'time without time zone': $column = $table->time($colName); break;
                 case 'timetz': case 'time with time zone': $column = $table->timeTz($colName); break;
                 case 'timestamp': case 'timestamp without time zone': case 'datetime': case 'datetime2': case 'smalldatetime': $column = $table->timestamp($colName, 0); break;
                 case 'timestamptz': case 'timestamp with time zone': case 'datetimeoffset': $column = $table->timestampTz($colName, 0); break;
                 case 'year': $column = $table->year($colName); break;
-
                 case 'boolean': case 'bool': case 'bit': $column = $table->boolean($colName); break;
-                
                 case 'json': $column = $table->json($colName); break;
                 case 'jsonb': $column = $table->jsonb($colName); break;
-                
                 case 'uuid': case 'uniqueidentifier': $column = $table->uuid($colName); break;
                 case 'inet': $column = $table->ipAddress($colName); break;
                 case 'macaddr': $column = $table->macAddress($colName); break;
-
                 case 'bytea': case 'binary': case 'varbinary': case 'blob': case 'tinyblob': case 'mediumblob': case 'longblob': $column = $table->binary($colName); break;
-                
                 case 'character varying': case 'varchar': case 'nvarchar':
                     $maxLength = $columnInfo->character_maximum_length;
                     $column = $maxLength > 0 && $maxLength <= 255 ? $table->string($colName, $maxLength) : $table->text($colName);
@@ -519,7 +512,6 @@ class ApiETLController extends Controller
                 case 'text': case 'ntext': case 'tinytext': case 'mediumtext': case 'longtext': case 'clob': case 'enum':
                     $column = $table->text($colName);
                     break;
-
                 default: $column = $table->text($colName); break;
             }
 
