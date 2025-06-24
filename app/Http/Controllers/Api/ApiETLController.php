@@ -107,6 +107,8 @@ class ApiETLController extends Controller
             ]);
         } catch (\Exception $e) {
             return response()->json(['status' => 'error', 'message' => 'Refresh gagal: ' . $e->getMessage()], 500);
+        } finally {
+            DB::disconnect($sourceConnectionName);
         }
     }
 
@@ -215,8 +217,8 @@ class ApiETLController extends Controller
                     foreach ($columns as $col) {
                         $this->addColumnWithProperType($table, $col, $driver);
                     }
-                    $table->timestamp('_etl_created_at')->default(DB::raw('CURRENT_TIMESTAMP'));
-                    $table->timestamp('_etl_updated_at')->default(DB::raw('CURRENT_TIMESTAMP'));
+                    $table->timestamp('_etl_created_at')->useCurrent();
+                    $table->timestamp('_etl_updated_at')->useCurrent();
                 });
 
                 $warehouseColumnsInfo = $this->getWarehouseColumnsInfo($warehouseTable);
@@ -235,16 +237,14 @@ class ApiETLController extends Controller
                 ];
             }
 
-            $datasource = Datasource::firstOrNew(['name' => $sourceConnectionName]);
+            $datasource = Datasource::firstOrNew(['name' => $sourceConnectionName, 'id_project' => $validated['id_project'] ?? 1]);
             $datasource->fill([
-                'id_project'      => $validated['id_project'] ?? 1,
                 'type'            => $driver,
                 'host'            => $validated['host'],
                 'port'            => $validated['port'],
                 'database_name'   => $validated['database'],
                 'username'        => $validated['username'],
-                // 'password'        => Crypt::encrypt($validated['password']),
-                'password'        => $validated['password'],
+                'password'        => Crypt::encryptString($validated['password']),
                 'modified_by'     => Auth::id() ?? 1,
                 'modified_time'   => now(),
                 'is_deleted'      => false
@@ -289,59 +289,78 @@ class ApiETLController extends Controller
     private function bulkTransferData($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable, $columnNames, $warehouseColumnsInfo)
     {
         $totalRows = 0;
-        $currentTime = now();
+        $currentTime = now()->toDateTimeString();
         $sourceDriver = $sourceConnection->getDriverName();
 
         $this->disableConstraints($warehouseConnection, $warehouseTable, 'pgsql');
         $this->disableConstraints($sourceConnection, $sourceTable, $sourceDriver);
 
         try {
-            DB::connection($warehouseConnection->getName())->beginTransaction();
             $sourceConnection->table($sourceTable)
-                ->orderBy($columnNames[0] ?? DB::raw('1'))
+                ->orderBy(DB::raw('1'))
                 ->chunk($this->chunkSize, function ($chunk) use ($warehouseConnection, $warehouseTable, &$totalRows, $currentTime, $warehouseColumnsInfo) {
-                    $batchData = [];
+                    $dataToInsert = [];
                     foreach ($chunk as $row) {
                         $insertData = [];
                         $sourceRowArray = (array)$row;
 
                         foreach ($sourceRowArray as $key => $value) {
-                            if ($value === null || trim((string)$value) === '') {
-                                $columnType = $warehouseColumnsInfo[$key] ?? 'text';
-                                
-                                if (str_contains($columnType, 'int') || str_contains($columnType, 'numeric') || str_contains($columnType, 'decimal') || str_contains($columnType, 'double') || str_contains($columnType, 'real')) {
-                                    $insertData[$key] = 0;
-                                } elseif (str_contains($columnType, 'date') || str_contains($columnType, 'timestamp')) {
-                                    $insertData[$key] = '1970-01-01 00:00:00';
-                                } elseif (str_contains($columnType, 'bool')) {
-                                    $insertData[$key] = false;
-                                } else {
-                                    $insertData[$key] = 'Tidak Diketahui';
-                                }
-                            } else {
-                                $insertData[$key] = $value;
+                             $columnInfo = $warehouseColumnsInfo[$key] ?? null;
+                            if ($value === null) {
+                                $insertData[$key] = ($columnInfo && $columnInfo['is_nullable']) ? null : $this->getDefaultValueForType($columnInfo['type'] ?? 'text');
+                                continue;
                             }
+
+                            if(is_string($value) && trim($value) === ''){
+                                $insertData[$key] = ($columnInfo && $columnInfo['is_nullable']) ? null : $this->getDefaultValueForType($columnInfo['type'] ?? 'text');
+                                continue;
+                            }
+                            
+                            $insertData[$key] = $value;
                         }
 
                         $insertData['_etl_created_at'] = $currentTime;
                         $insertData['_etl_updated_at'] = $currentTime;
-                        $batchData[] = $insertData;
+                        $dataToInsert[] = $insertData;
                     }
 
-                    if (!empty($batchData)) {
-                        $warehouseConnection->table($warehouseTable)->insert($batchData);
-                        $totalRows += count($batchData);
+                    if (!empty($dataToInsert)) {
+                        $warehouseConnection->beginTransaction();
+                        try {
+                            foreach (array_chunk($dataToInsert, $this->batchSize) as $insertBatch) {
+                                $warehouseConnection->table($warehouseTable)->insert($insertBatch);
+                            }
+                            $warehouseConnection->commit();
+                            $totalRows += count($dataToInsert);
+                        } catch (\Exception $e) {
+                            $warehouseConnection->rollBack();
+                            throw $e;
+                        }
                     }
                 });
-            DB::connection($warehouseConnection->getName())->commit();
-        } catch (\Exception $e) {
-            DB::connection($warehouseConnection->getName())->rollBack();
-            throw $e;
         } finally {
             $this->enableConstraints($warehouseConnection, $warehouseTable, 'pgsql');
             $this->enableConstraints($sourceConnection, $sourceTable, $sourceDriver);
         }
         return $totalRows;
+    }
+
+    private function getDefaultValueForType(string $type)
+    {
+        $type = strtolower($type);
+        if (str_contains($type, 'int') || str_contains($type, 'numeric') || str_contains($type, 'decimal') || str_contains($type, 'double') || str_contains($type, 'real')) {
+            return 0;
+        }
+        if (str_contains($type, 'uuid')) {
+            return '00000000-0000-0000-0000-000000000000';
+        }
+        if (str_contains($type, 'date') || str_contains($type, 'timestamp')) {
+            return '1970-01-01 00:00:00';
+        }
+        if (str_contains($type, 'bool')) {
+            return false;
+        }
+        return 'Tidak Diketahui';
     }
 
     private function bulkRefreshTable($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable)
@@ -354,13 +373,16 @@ class ApiETLController extends Controller
     private function getWarehouseColumnsInfo(string $tableName): array
     {
         $columns = DB::connection($this->warehouseConnectionName)->select(
-            "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ?",
+            "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?",
             [$tableName]
         );
 
         $info = [];
         foreach ($columns as $column) {
-            $info[$column->column_name] = $column->data_type;
+            $info[$column->column_name] = [
+                'type' => $column->data_type,
+                'is_nullable' => strtoupper($column->is_nullable) === 'YES',
+            ];
         }
         return $info;
     }
@@ -465,14 +487,14 @@ class ApiETLController extends Controller
                 case 'money': case 'smallmoney': $column = $table->decimal($colName, 19, 4); break;
                 
                 case 'real': case 'float4': $column = $table->float($colName); break;
-                case 'float': $column = $table->float($colName, $columnInfo->numeric_precision, $columnInfo->numeric_scale); break;
+                case 'float': $column = $table->float($colName); break;
                 case 'double precision': case 'float8': case 'double': $column = $table->double($colName); break;
 
                 case 'date': $column = $table->date($colName); break;
                 case 'time': case 'time without time zone': $column = $table->time($colName); break;
                 case 'timetz': case 'time with time zone': $column = $table->timeTz($colName); break;
-                case 'timestamp': case 'timestamp without time zone': case 'datetime': case 'datetime2': case 'smalldatetime': $column = $table->timestamp($colName); break;
-                case 'timestamptz': case 'timestamp with time zone': case 'datetimeoffset': $column = $table->timestampTz($colName); break;
+                case 'timestamp': case 'timestamp without time zone': case 'datetime': case 'datetime2': case 'smalldatetime': $column = $table->timestamp($colName, 0); break;
+                case 'timestamptz': case 'timestamp with time zone': case 'datetimeoffset': $column = $table->timestampTz($colName, 0); break;
                 case 'year': $column = $table->year($colName); break;
 
                 case 'boolean': case 'bool': case 'bit': $column = $table->boolean($colName); break;
@@ -488,7 +510,7 @@ class ApiETLController extends Controller
                 
                 case 'character varying': case 'varchar': case 'nvarchar':
                     $maxLength = $columnInfo->character_maximum_length;
-                    $column = $maxLength > 0 ? $table->string($colName, $maxLength) : $table->text($colName);
+                    $column = $maxLength > 0 && $maxLength <= 255 ? $table->string($colName, $maxLength) : $table->text($colName);
                     break;
                 case 'character': case 'char': case 'nchar':
                     $maxLength = $columnInfo->character_maximum_length ?? 1;
@@ -521,9 +543,12 @@ class ApiETLController extends Controller
                 $isDateType = in_array($dataType, ['date', 'timestamp', 'timestamptz', 'datetime', 'datetime2']);
                 $isNumericType = in_array($dataType, ['integer', 'bigint', 'numeric', 'decimal', 'real', 'double precision', 'int', 'smallint']);
 
-                if ($isDateType || $isNumericType) {
+                if (str_contains(strtolower($colName), 'id') || $isDateType || $isNumericType) {
                     $idxName = "idx_{$tableName}_{$colName}";
-                    $connection->statement("CREATE INDEX {$concurrently} IF NOT EXISTS \"{$idxName}\" ON \"{$tableName}\" (\"{$colName}\")");
+                    if(strlen($idxName) > 63) {
+                        $idxName = substr($idxName, 0, 58) . substr(md5($idxName), 0, 4);
+                    }
+                    $connection->statement("CREATE INDEX {$concurrently} IF NOT EXISTS \"{$idxName}\" ON public.\"{$tableName}\" (\"{$colName}\")");
                 }
             }
         } catch (\Exception $e) {
