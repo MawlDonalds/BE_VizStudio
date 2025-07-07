@@ -13,15 +13,15 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
 
-class ApiETLController extends Controller
+class ApiELTController extends Controller
 {
-    private $warehouseConnectionName;
+    private $dataLakeConnectionName;
     private $batchSize = 1000;
     private $chunkSize = 5000;
 
     public function __construct()
     {
-        $this->warehouseConnectionName = 'pgsql2';
+        $this->dataLakeConnectionName = 'pgsql2';
     }
 
     private function getDatasourceConnectionConfig(string $connectionName): array
@@ -42,7 +42,7 @@ class ApiETLController extends Controller
 
     public function connectDatasource(Request $request)
     {
-        $warehouseConnection = $this->warehouseConnectionName;
+        $dataLakeConnection = $this->dataLakeConnectionName;
 
         $validated = $request->validate([
             'id_project' => 'nullable|integer',
@@ -54,8 +54,8 @@ class ApiETLController extends Controller
             'password' => 'required|string',
             'connection_name' => [
                 'required', 'string', 'alpha_dash',
-                function ($attribute, $value, $fail) use ($warehouseConnection) {
-                    $existing = collect(DB::connection($warehouseConnection)->select("
+                function ($attribute, $value, $fail) use ($dataLakeConnection) {
+                    $existing = collect(DB::connection($dataLakeConnection)->select("
                         SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE ?
                     ", ["{$value}__%"]));
                     if ($existing->isNotEmpty()) {
@@ -65,7 +65,7 @@ class ApiETLController extends Controller
             ]
         ]);
 
-        return $this->performEtlProcess($validated);
+        return $this->performExtractLoad($validated);
     }
 
     public function refresh(Request $request)
@@ -77,7 +77,7 @@ class ApiETLController extends Controller
             $connectionConfig = $this->getDatasourceConnectionConfig($sourceConnectionName);
             config(["database.connections.{$sourceConnectionName}" => $connectionConfig]);
 
-            $warehouseConnection = DB::connection($this->warehouseConnectionName);
+            $dataLakeConnection = DB::connection($this->dataLakeConnectionName);
             $sourceConnection = DB::connection($sourceConnectionName);
             $schema = $this->getSourceSchema($sourceConnection);
             $tables = $this->getSourceTables($sourceConnection, $schema);
@@ -85,27 +85,27 @@ class ApiETLController extends Controller
 
             foreach ($tables as $table) {
                 $tableName = $table->table_name;
-                $warehouseTable = $sourceConnectionName . '__' . $tableName;
+                $dataLakeTable = $sourceConnectionName . '__' . $tableName;
 
-                if (!Schema::connection($warehouseConnection->getName())->hasTable($warehouseTable)) {
+                if (!Schema::connection($dataLakeConnection->getName())->hasTable($dataLakeTable)) {
                     continue;
                 }
 
-                $this->disableConstraints($warehouseConnection, $warehouseTable, 'pgsql');
-                $warehouseConnection->table($warehouseTable)->truncate();
-                $totalRows = $this->bulkRefreshTable($sourceConnection, $warehouseConnection, $tableName, $warehouseTable);
-                $this->enableConstraints($warehouseConnection, $warehouseTable, 'pgsql');
+                $this->disableConstraints($dataLakeConnection, $dataLakeTable, 'pgsql');
+                $dataLakeConnection->table($dataLakeTable)->truncate();
+                $totalRows = $this->bulkRefreshTable($sourceConnection, $dataLakeConnection, $tableName, $dataLakeTable);
+                $this->enableConstraints($dataLakeConnection, $dataLakeTable, 'pgsql');
 
                 $refreshedTables[] = [
                     'source_table' => $tableName,
-                    'warehouse_table' => $warehouseTable,
+                    'data_lake_table' => $dataLakeTable,
                     'rows_refreshed' => $totalRows
                 ];
             }
 
             return response()->json([
                 'status' => 'success',
-                'message' => 'Data warehouse berhasil diperbarui dari sumber: ' . $sourceConnectionName,
+                'message' => 'Data lake berhasil diperbarui dari sumber: ' . $sourceConnectionName,
                 'refreshed_tables' => $refreshedTables
             ]);
         } catch (\Exception $e) {
@@ -123,16 +123,16 @@ class ApiETLController extends Controller
         try {
             $connectionConfig = $this->getDatasourceConnectionConfig($connectionName);
             
-            $tablesToDrop = DB::connection($this->warehouseConnectionName)->select("
+            $tablesToDrop = DB::connection($this->dataLakeConnectionName)->select("
                 SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE ?
             ", ["{$connectionName}__%"]);
 
             foreach ($tablesToDrop as $table) {
-                Schema::connection($this->warehouseConnectionName)->dropIfExists($table->tablename);
+                Schema::connection($this->dataLakeConnectionName)->dropIfExists($table->tablename);
             }
             
-            $etlPayload = array_merge($connectionConfig, ['connection_name' => $connectionName]);
-            return $this->performEtlProcess($etlPayload);
+            $eltPayload = array_merge($connectionConfig, ['connection_name' => $connectionName]);
+            return $this->performExtractLoad($eltPayload);
 
         } catch (\Exception $e) {
             return response()->json(['status' => 'error', 'message' => 'Full Refresh gagal: ' . $e->getMessage()], 500);
@@ -153,12 +153,12 @@ class ApiETLController extends Controller
         $droppedTables = [];
 
         try {
-            $tablesToDrop = DB::connection($this->warehouseConnectionName)->select("
+            $tablesToDrop = DB::connection($this->dataLakeConnectionName)->select("
                 SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE ?
             ", ["{$connectionName}__%"]);
 
             foreach ($tablesToDrop as $table) {
-                Schema::connection($this->warehouseConnectionName)->dropIfExists($table->tablename);
+                Schema::connection($this->dataLakeConnectionName)->dropIfExists($table->tablename);
                 $droppedTables[] = $table->tablename;
             }
 
@@ -172,7 +172,7 @@ class ApiETLController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'message' => "Datasource '{$connectionName}' and its associated tables have been deleted from the warehouse.",
+                'message' => "Datasource '{$connectionName}' and its associated tables have been deleted from the data lake.",
                 'deleted_tables' => $droppedTables,
                 'deleted_count' => count($droppedTables)
             ]);
@@ -181,7 +181,7 @@ class ApiETLController extends Controller
         }
     }
 
-    private function performEtlProcess(array $validated)
+    private function performExtractLoad(array $validated)
     {
         $sourceConnectionName = $validated['connection_name'];
         $driver = $validated['driver'];
@@ -192,13 +192,13 @@ class ApiETLController extends Controller
             'password' => $validated['password'], 'charset' => 'utf8', 'prefix' => '',
         ]]);
 
-        $warehouseConnection = DB::connection($this->warehouseConnectionName);
+        $dataLakeConnection = DB::connection($this->dataLakeConnectionName);
 
         try {
             $sourceConnection = DB::connection($sourceConnectionName);
             $sourceConnection->getPdo();
             
-            $this->optimizeConnections($sourceConnection, $warehouseConnection, $driver, 'pgsql');
+            $this->optimizeConnections($sourceConnection, $dataLakeConnection, $driver, 'pgsql');
             
             $schema = $this->getSourceSchema($sourceConnection);
             $tables = $this->getSourceTables($sourceConnection, $schema);
@@ -212,26 +212,26 @@ class ApiETLController extends Controller
                 if (empty($columns)) continue;
 
                 $primaryKeyColumns = $this->getSourcePrimaryKeyColumns($sourceConnection, $tableName, $schema);
-                $warehouseTable = $sourceConnectionName . '__' . $tableName;
+                $dataLakeTable = $sourceConnectionName . '__' . $tableName;
 
-                Schema::connection($warehouseConnection->getName())->create($warehouseTable, function (Blueprint $table) use ($columns, $driver) {
+                Schema::connection($dataLakeConnection->getName())->create($dataLakeTable, function (Blueprint $table) use ($columns, $driver) {
                     foreach ($columns as $col) {
                         $this->addColumnWithProperType($table, $col, $driver);
                     }
-                    $table->timestamp('_etl_created_at')->useCurrent();
-                    $table->timestamp('_etl_updated_at')->useCurrent();
+                    $table->timestamp('_elt_created_at')->useCurrent();
+                    $table->timestamp('_elt_updated_at')->useCurrent();
                 });
 
-                $warehouseColumnsInfo = $this->getWarehouseColumnsInfo($warehouseTable);
+                $dataLakeColumnsInfo = $this->getDataLakeColumnsInfo($dataLakeTable);
 
-                $totalRows = $this->bulkTransferData($sourceConnection, $warehouseConnection, $tableName, $warehouseTable, collect($columns)->pluck('column_name')->toArray(), $warehouseColumnsInfo);
-                $this->addConstraintsAndIndexes($warehouseConnection, $warehouseTable, $primaryKeyColumns, $columns);
+                $totalRows = $this->bulkLoadData($sourceConnection, $dataLakeConnection, $tableName, $dataLakeTable, collect($columns)->pluck('column_name')->toArray(), $dataLakeColumnsInfo);
+                $this->addConstraintsAndIndexes($dataLakeConnection, $dataLakeTable, $primaryKeyColumns, $columns);
                 
                 $endTime = microtime(true);
                 $processingTime = round($endTime - $startTime, 2);
 
                 $processedTables[] = [
-                    'source_table' => $tableName, 'warehouse_table' => $warehouseTable,
+                    'source_table' => $tableName, 'data_lake_table' => $dataLakeTable,
                     'columns_count' => count($columns), 'rows_count' => $totalRows,
                     'primary_key_columns' => $primaryKeyColumns, 'processing_time_seconds' => $processingTime,
                     'rows_per_second' => $totalRows > 0 ? round($totalRows / max($processingTime, 0.001)) : 0,
@@ -258,55 +258,55 @@ class ApiETLController extends Controller
             $datasource->save();
 
             return response()->json([
-                'status' => 'success', 'message' => 'ETL berhasil dijalankan dari koneksi: ' . $sourceConnectionName,
+                'status' => 'success', 'message' => 'ELT berhasil dijalankan dari koneksi: ' . $sourceConnectionName,
                 'processed_tables' => $processedTables, 'total_tables' => count($processedTables),
                 'total_rows' => collect($processedTables)->sum('rows_count'),
             ]);
         } catch (\Exception $e) {
-            Log::error("ETL Error: " . $e->getMessage(), ['connection' => $sourceConnectionName, 'trace' => $e->getTraceAsString()]);
+            Log::error("ELT Error: " . $e->getMessage(), ['connection' => $sourceConnectionName, 'trace' => $e->getTraceAsString()]);
             DB::disconnect($sourceConnectionName);
-            return response()->json(['status' => 'error', 'message' => 'ETL gagal: ' . $e->getMessage()], 500);
+            return response()->json(['status' => 'error', 'message' => 'ELT gagal: ' . $e->getMessage()], 500);
         } finally {
             DB::disconnect($sourceConnectionName);
         }
     }
     
-    private function optimizeConnections($sourceConnection, $warehouseConnection, $sourceDriver, $warehouseDriver)
+    private function optimizeConnections($sourceConnection, $dataLakeConnection, $sourceDriver, $dataLakeDriver)
     {
         try {
             if ($sourceDriver === 'pgsql') {
                 $sourceConnection->statement("SET work_mem = '256MB'");
             }
-            if ($warehouseDriver === 'pgsql') {
-                $warehouseConnection->statement("SET synchronous_commit = OFF");
-                $warehouseConnection->statement("SET work_mem = '256MB'");
-                $warehouseConnection->statement("SET maintenance_work_mem = '1GB'");
+            if ($dataLakeDriver === 'pgsql') {
+                $dataLakeConnection->statement("SET synchronous_commit = OFF");
+                $dataLakeConnection->statement("SET work_mem = '256MB'");
+                $dataLakeConnection->statement("SET maintenance_work_mem = '1GB'");
             }
         } catch (\Exception $e) {
             Log::warning("Gagal melakukan optimasi koneksi: " . $e->getMessage());
         }
     }
 
-    private function bulkTransferData($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable, $columnNames, $warehouseColumnsInfo)
+    private function bulkLoadData($sourceConnection, $dataLakeConnection, $sourceTable, $dataLakeTable, $columnNames, $dataLakeColumnsInfo)
     {
         $totalRows = 0;
         $currentTime = now()->toDateTimeString();
         $sourceDriver = $sourceConnection->getDriverName();
 
-        $this->disableConstraints($warehouseConnection, $warehouseTable, 'pgsql');
+        $this->disableConstraints($dataLakeConnection, $dataLakeTable, 'pgsql');
         $this->disableConstraints($sourceConnection, $sourceTable, $sourceDriver);
 
         try {
             $sourceConnection->table($sourceTable)
                 ->orderBy(DB::raw('1'))
-                ->chunk($this->chunkSize, function ($chunk) use ($warehouseConnection, $warehouseTable, &$totalRows, $currentTime, $warehouseColumnsInfo) {
+                ->chunk($this->chunkSize, function ($chunk) use ($dataLakeConnection, $dataLakeTable, &$totalRows, $currentTime, $dataLakeColumnsInfo) {
                     $dataToInsert = [];
                     foreach ($chunk as $row) {
                         $insertData = [];
                         $sourceRowArray = (array)$row;
 
                         foreach ($sourceRowArray as $key => $value) {
-                             $columnInfo = $warehouseColumnsInfo[$key] ?? null;
+                             $columnInfo = $dataLakeColumnsInfo[$key] ?? null;
                             if ($value === null) {
                                 $insertData[$key] = ($columnInfo && $columnInfo['is_nullable']) ? null : $this->getDefaultValueForType($columnInfo['type'] ?? 'text');
                                 continue;
@@ -320,27 +320,27 @@ class ApiETLController extends Controller
                             $insertData[$key] = $value;
                         }
 
-                        $insertData['_etl_created_at'] = $currentTime;
-                        $insertData['_etl_updated_at'] = $currentTime;
+                        $insertData['_elt_created_at'] = $currentTime;
+                        $insertData['_elt_updated_at'] = $currentTime;
                         $dataToInsert[] = $insertData;
                     }
 
                     if (!empty($dataToInsert)) {
-                        $warehouseConnection->beginTransaction();
+                        $dataLakeConnection->beginTransaction();
                         try {
                             foreach (array_chunk($dataToInsert, $this->batchSize) as $insertBatch) {
-                                $warehouseConnection->table($warehouseTable)->insert($insertBatch);
+                                $dataLakeConnection->table($dataLakeTable)->insert($insertBatch);
                             }
-                            $warehouseConnection->commit();
+                            $dataLakeConnection->commit();
                             $totalRows += count($dataToInsert);
                         } catch (\Exception $e) {
-                            $warehouseConnection->rollBack();
+                            $dataLakeConnection->rollBack();
                             throw $e;
                         }
                     }
                 });
         } finally {
-            $this->enableConstraints($warehouseConnection, $warehouseTable, 'pgsql');
+            $this->enableConstraints($dataLakeConnection, $dataLakeTable, 'pgsql');
             $this->enableConstraints($sourceConnection, $sourceTable, $sourceDriver);
         }
         return $totalRows;
@@ -364,16 +364,16 @@ class ApiETLController extends Controller
         return 'Tidak Diketahui';
     }
 
-    private function bulkRefreshTable($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable)
+    private function bulkRefreshTable($sourceConnection, $dataLakeConnection, $sourceTable, $dataLakeTable)
     {
         $columnNames = Schema::connection($sourceConnection->getName())->getColumnListing($sourceTable);
-        $warehouseColumnsInfo = $this->getWarehouseColumnsInfo($warehouseTable);
-        return $this->bulkTransferData($sourceConnection, $warehouseConnection, $sourceTable, $warehouseTable, $columnNames, $warehouseColumnsInfo);
+        $dataLakeColumnsInfo = $this->getDataLakeColumnsInfo($dataLakeTable);
+        return $this->bulkLoadData($sourceConnection, $dataLakeConnection, $sourceTable, $dataLakeTable, $columnNames, $dataLakeColumnsInfo);
     }
 
-    private function getWarehouseColumnsInfo(string $tableName): array
+    private function getDataLakeColumnsInfo(string $tableName): array
     {
-        $columns = DB::connection($this->warehouseConnectionName)->select(
+        $columns = DB::connection($this->dataLakeConnectionName)->select(
             "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?",
             [$tableName]
         );

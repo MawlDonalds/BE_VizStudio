@@ -1,8 +1,8 @@
 <?php
 
 use App\Http\Controllers\Api\ApiCanvasController;
-use App\Http\Controllers\Api\ApiWarehouseReaderController;
-use App\Http\Controllers\Api\ApiETLController;
+use App\Http\Controllers\Api\ApiLakeReaderController;
+use App\Http\Controllers\Api\ApiELTController;
 use App\Http\Controllers\Api\ApiGetDataController;
 use App\Http\Controllers\Api\ApiVisualizationController;
 use App\Http\Controllers\Api\ApiOtentikasiController;
@@ -26,14 +26,14 @@ Route::prefix('kelola-dashboard')->group(function () {
     // Route::get('/columns/{table}', [ApiGetDataController::class, 'getTableColumns']);
     Route::post('/execute-query', [ApiGetDataController::class, 'executeQuery']);
 
-    Route::post('/fetch-database', [ApiWarehouseReaderController::class, 'connectDatasource']);
-    Route::get('/fetch-tables', [ApiWarehouseReaderController::class, 'fetchTables']);
-    Route::get('/fetch-column/{table}', [ApiWarehouseReaderController::class, 'fetchTableColumns']);
+    Route::post('/fetch-database', [ApiLakeReaderController::class, 'connectDatasource']);
+    Route::get('/fetch-tables', [ApiLakeReaderController::class, 'fetchTables']);
+    Route::get('/fetch-column/{table}', [ApiLakeReaderController::class, 'fetchTableColumns']);
     
     Route::post('/fetch-data', [ApiGetDataController::class, 'getTableDataByColumns']);
     Route::post('/check-date', [ApiGetDataController::class, 'checkDateColumn']);
 
-    Route::post('/check-foreign-key', [ApiWarehouseReaderController::class, 'checkIfForeignKey']);
+    Route::post('/check-foreign-key', [ApiLakeReaderController::class, 'checkIfForeignKey']);
     Route::post('/visualisasi-data', [ApiGetDataController::class, 'getVisualisasiData']);
     Route::post('/convert-sql', [ApiVisualizationController::class, 'convertSql']);
     Route::post('/get-joinable-tables', [ApiGetDataController::class, 'getJoinableTables']);
@@ -53,9 +53,9 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::get('/project/{id_project}/canvases', [ApiCanvasController::class, 'getCanvasByProject']);
     Route::get('/first-canvas', [ApiCanvasController::class, 'getFirstCanvas']);
 
-    Route::post('/etl/run', [ApiETLController::class, 'connectDatasource']);
-    Route::post('/etl/refresh', [ApiETLController::class, 'refresh']);
-    Route::post('/etl/full-refresh', [ApiETLController::class, 'fullRefresh']);
-    Route::post('/etl/delete', [ApiETLController::class, 'delete']);
-    Route::get('/etl/stats', [ApiETLController::class, 'getWarehouseStats']);
+    Route::post('/etl/run', [ApiELTController::class, 'connectDatasource']);
+    Route::post('/etl/refresh', [ApiELTController::class, 'refresh']);
+    Route::post('/etl/full-refresh', [ApiELTController::class, 'fullRefresh']);
+    Route::post('/etl/delete', [ApiELTController::class, 'delete']);
+    Route::get('/etl/stats', [ApiELTController::class, 'getLakeStats']);
 });

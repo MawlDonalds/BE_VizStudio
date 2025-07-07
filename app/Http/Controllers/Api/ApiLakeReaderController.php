@@ -9,19 +9,19 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
-class ApiWarehouseReaderController extends Controller
+class ApiLakeReaderController extends Controller
 {
-    private $warehouseConnectionName;
+    private $lakeConnectionName;
 
     public function __construct()
     {
-        $this->warehouseConnectionName = 'pgsql2';
+        $this->lakeConnectionName = 'pgsql2';
     }
 
     public function fetchTables()
     {
         try {
-            $connection = DB::connection($this->warehouseConnectionName);
+            $connection = DB::connection($this->lakeConnectionName);
             $connection->getPdo();
 
             $datasources = Datasource::where('is_deleted', false)
@@ -51,7 +51,7 @@ class ApiWarehouseReaderController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'connection_name' => $this->warehouseConnectionName,
+                    'connection_name' => $this->lakeConnectionName,
                     'tables' => $tables,
                     'grouped_tables' => $enrichedGroups,
                     'total_tables' => $totalTablesCount,
@@ -59,7 +59,7 @@ class ApiWarehouseReaderController extends Controller
                 ]
             ]);
         } catch (\Exception $e) {
-            Log::error("Gagal mengambil daftar tabel dari '{$this->warehouseConnectionName}': " . $e->getMessage());
+            Log::error("Gagal mengambil daftar tabel dari '{$this->lakeConnectionName}': " . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengambil daftar tabel: ' . $e->getMessage()
@@ -70,13 +70,13 @@ class ApiWarehouseReaderController extends Controller
     public function fetchTableColumns($tableName)
     {
         try {
-            $connection = DB::connection($this->warehouseConnectionName);
+            $connection = DB::connection($this->lakeConnectionName);
             $schemaBuilder = $connection->getSchemaBuilder();
 
             if (!$schemaBuilder->hasTable($tableName)) {
                 return response()->json([
                     'success' => false,
-                    'message' => "Tabel '{$tableName}' tidak ditemukan di koneksi '{$this->warehouseConnectionName}'."
+                    'message' => "Tabel '{$tableName}' tidak ditemukan di koneksi '{$this->lakeConnectionName}'."
                 ], 404);
             }
 
@@ -154,7 +154,7 @@ class ApiWarehouseReaderController extends Controller
     private function getTablesFromDatabase()
     {
         try {
-            $tablesData = Schema::connection($this->warehouseConnectionName)->getTables();
+            $tablesData = Schema::connection($this->lakeConnectionName)->getTables();
             return array_map(fn($table) => array_values((array)$table)[0], $tablesData);
         } catch (\Exception $e) {
             throw new \Exception('Gagal mengambil daftar tabel dari database: ' . $e->getMessage());
