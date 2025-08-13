@@ -6,7 +6,9 @@ use App\Http\Controllers\Api\ApiELTController;
 use App\Http\Controllers\Api\ApiGetDataController;
 use App\Http\Controllers\Api\ApiVisualizationController;
 use App\Http\Controllers\Api\ApiOtentikasiController;
+use App\Http\Controllers\Api\NL2SQLController;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/user', function (Request $request) {
@@ -58,4 +60,7 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::post('/etl/full-refresh', [ApiELTController::class, 'fullRefresh']);
     Route::post('/etl/delete', [ApiELTController::class, 'delete']);
     Route::get('/etl/stats', [ApiELTController::class, 'getLakeStats']);
+
+    Route::post('/nl2sql/generate', [NL2SQLController::class, 'generate']);
+    Route::get('/nl2sql/test-connection', [NL2SQLController::class, 'testConnection']);
 });
