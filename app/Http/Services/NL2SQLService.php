@@ -17,37 +17,22 @@ class NL2SQLService
     public function __construct()
     {
         $this->client = new Client([
-            'timeout' => 120, // 2 minutes untuk LLM processing
+            'timeout' => env('FASTAPI_TIMEOUT', 120),
             'connect_timeout' => 10,
-            'verify' => false, // Disable SSL verification jika ada masalah
+            'verify' => false,
         ]);
-        
-        $this->baseUrl = env('FASTAPI_URL', 'http://localhost:8000');
+
+        $this->baseUrl = env('FASTAPI_URL', 'http://localhost:8001');
         $this->timeout = env('FASTAPI_TIMEOUT', 120);
     }
 
-    /**
-     * Generate SQL from natural language prompt via FastAPI.
-     *
-     * @param array $data Data to send: ['prompt' => string, 'database_name' => string|null, 'table_names' => array|null]
-     * @param int $id_datasource ID datasource untuk validasi
-     * @return array Response from FastAPI or error
-     * @throws \Exception Jika datasource invalid
-     */
     public function generateSql(array $data, int $id_datasource): array
     {
-        // Validasi datasource
         $datasource = Datasource::find($id_datasource);
         if (!$datasource) {
             throw new \Exception("Datasource dengan ID $id_datasource tidak ditemukan.");
         }
 
-        // Set database_name dari datasource jika tidak ada
-        if (empty($data['database_name'])) {
-            $data['database_name'] = $datasource->database_name;
-        }
-
-        // Pastikan prompt tidak kosong
         if (empty($data['prompt'])) {
             return [
                 'error' => true,
@@ -55,7 +40,6 @@ class NL2SQLService
             ];
         }
 
-        // Endpoint sesuai dengan FastAPI yang Anda buat
         $endpoint = '/api/v1/nl2sql/convert';
         $url = $this->baseUrl . $endpoint;
 
@@ -89,7 +73,7 @@ class NL2SQLService
                     'status_code' => $statusCode,
                     'response' => $body,
                 ]);
-                
+
                 return [
                     'error' => true,
                     'message' => "FastAPI returned status {$statusCode}: {$body}",
@@ -97,20 +81,19 @@ class NL2SQLService
             }
 
             $decodedResponse = json_decode($body, true);
-            
+
             if (json_last_error() !== JSON_ERROR_NONE) {
                 Log::error('Failed to decode FastAPI response', [
                     'json_error' => json_last_error_msg(),
                     'response' => $body,
                 ]);
-                
+
                 return [
                     'error' => true,
                     'message' => 'Invalid JSON response from FastAPI: ' . json_last_error_msg(),
                 ];
             }
 
-            // Validasi struktur response
             $requiredFields = ['sql_query'];
             foreach ($requiredFields as $field) {
                 if (!isset($decodedResponse[$field])) {
@@ -118,7 +101,7 @@ class NL2SQLService
                         'missing_field' => $field,
                         'response' => $decodedResponse,
                     ]);
-                    
+
                     return [
                         'error' => true,
                         'message' => "Missing required field '{$field}' in FastAPI response",
@@ -152,7 +135,7 @@ class NL2SQLService
         } catch (RequestException $e) {
             $errorMessage = 'FastAPI Request Error';
             $errorDetails = $e->getMessage();
-            
+
             if ($e->hasResponse()) {
                 $statusCode = $e->getResponse()->getStatusCode();
                 $responseBody = (string) $e->getResponse()->getBody();
@@ -189,11 +172,6 @@ class NL2SQLService
         }
     }
 
-    /**
-     * Test connection to FastAPI server.
-     *
-     * @return array
-     */
     public function testConnection(): array
     {
         try {
