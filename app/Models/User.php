@@ -89,4 +89,9 @@ class User extends Authenticatable
     {
         return $this->hasMany(ProjectAccess::class, 'id_user');
     }
+
+    public function chatSessions()
+    {
+        return $this->hasMany(ChatSession::class, 'user_id', 'id_user');
+    }
 }
