@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Services\NL2SQLService;
+use App\Http\Services\ChatService;
 use App\Models\Datasource;
 use App\Models\Visualization;
 use Illuminate\Http\Request;
@@ -13,10 +14,12 @@ use Illuminate\Support\Facades\Log;
 class NL2SQLController extends Controller
 {
     protected $nl2sqlService;
+    protected $chatService;
 
-    public function __construct(NL2SQLService $nl2sqlService)
+    public function __construct(NL2SQLService $nl2sqlService, ChatService $chatService)
     {
         $this->nl2sqlService = $nl2sqlService;
+        $this->chatService = $chatService;
     }
 
     public function generate(Request $request)
@@ -29,6 +32,9 @@ class NL2SQLController extends Controller
             'execute' => 'boolean',
             'save_visualization' => 'boolean',
             'id_canvas' => 'required_if:save_visualization,true|integer|exists:public.canvas,id_canvas',
+            'session_id' => 'nullable|integer|exists:chat_sessions,id_chat_session',
+            'auto_create_session' => 'boolean',
+            'session_title' => 'nullable|string|max:255',
         ]);
 
         try {
@@ -36,15 +42,20 @@ class NL2SQLController extends Controller
                 ->where('is_deleted', false)
                 ->firstOrFail();
 
+            // Handle chat session
+            $sessionId = $this->handleChatSession($validated);
+
             $requestData = [
                 'prompt' => $validated['prompt'],
                 'id_datasource' => $validated['id_datasource'],
                 'table_names' => $validated['table_names'] ?? null,
+                'session_id' => $sessionId,
             ];
 
             Log::info('NL2SQL Request', [
                 'request_data' => $requestData,
                 'id_datasource' => $validated['id_datasource'],
+                'session_id' => $sessionId,
             ]);
 
             $fastApiResponse = $this->nl2sqlService->generateSql($requestData, $validated['id_datasource']);
@@ -65,13 +76,19 @@ class NL2SQLController extends Controller
                 ], 500);
             }
 
+            // Save conversation to chat history
+            if ($sessionId) {
+                $this->saveChatHistory($sessionId, $validated['prompt'], $fastApiResponse);
+            }
+
             $result = [
                 'success' => true,
                 'data' => [
                     'sql_query' => $fastApiResponse['sql_query'],
                     'confidence_score' => $fastApiResponse['confidence_score'] ?? 0.0,
                     'explanation' => $fastApiResponse['explanation'] ?? '',
-                    'analysis' => $fastApiResponse['analysis'] ?? ''
+                    'analysis' => $fastApiResponse['analysis'] ?? '',
+                    'session_id' => $sessionId
                 ],
                 'executed_data' => null,
                 'visualization_id' => null,
@@ -187,6 +204,85 @@ class NL2SQLController extends Controller
             'modified_by' => 'system',
             'modified_time' => now(),
         ]);
+    }
+
+    /**
+     * Handle chat session creation or retrieval
+     */
+    private function handleChatSession($validated)
+    {
+        try {
+            $sessionId = $validated['session_id'] ?? null;
+
+            if ($sessionId) {
+                // Verify existing session
+                $session = $this->chatService->initializeSession($sessionId);
+                return $session->id_chat_session;
+            }
+
+            if ($validated['auto_create_session'] ?? false) {
+                // Create new session
+                $title = $validated['session_title'] ?? null;
+                if (!$title) {
+                    // Generate title from prompt
+                    $title = substr($validated['prompt'], 0, 50);
+                    if (strlen($validated['prompt']) > 50) {
+                        $title .= '...';
+                    }
+                }
+                
+                $session = $this->chatService->initializeSession(null, $title);
+                return $session->id_chat_session;
+            }
+
+            return null;
+
+        } catch (\Exception $e) {
+            Log::error('Failed to handle chat session', [
+                'error' => $e->getMessage(),
+                'validated' => $validated
+            ]);
+            
+            return null;
+        }
+    }
+
+    /**
+     * Save conversation to chat history
+     */
+    private function saveChatHistory($sessionId, $userPrompt, $fastApiResponse)
+    {
+        try {
+            $messages = [
+                [
+                    'role' => 'user',
+                    'content' => $userPrompt,
+                    'timestamp' => now()->toISOString()
+                ],
+                [
+                    'role' => 'assistant',
+                    'content' => [
+                        'sql_query' => $fastApiResponse['sql_query'],
+                        'explanation' => $fastApiResponse['explanation'] ?? '',
+                        'analysis' => $fastApiResponse['analysis'] ?? '',
+                        'confidence_score' => $fastApiResponse['confidence_score'] ?? 0.0
+                    ],
+                    'timestamp' => now()->toISOString()
+                ]
+            ];
+
+            $this->chatService->saveMessage($sessionId, $messages, 'nl2sql_conversation');
+            
+            return true;
+
+        } catch (\Exception $e) {
+            Log::error('Failed to save chat history', [
+                'error' => $e->getMessage(),
+                'session_id' => $sessionId
+            ]);
+            
+            return false;
+        }
     }
 
     private function getConnectionDetails(int $idDatasource): array
