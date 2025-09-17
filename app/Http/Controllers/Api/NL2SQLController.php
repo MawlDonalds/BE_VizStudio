@@ -71,7 +71,8 @@ class NL2SQLController extends Controller
                     'sql_query' => $fastApiResponse['sql_query'],
                     'confidence_score' => $fastApiResponse['confidence_score'] ?? 0.0,
                     'explanation' => $fastApiResponse['explanation'] ?? '',
-                    'analysis' => $fastApiResponse['analysis'] ?? ''
+                    'analysis' => $fastApiResponse['analysis'] ?? '',
+                    'chart_recommendation' => $fastApiResponse['chart_recommendation'] ?? null, // Tambahkan rekomendasi
                 ],
                 'executed_data' => null,
                 'visualization_id' => null,
@@ -159,25 +160,32 @@ class NL2SQLController extends Controller
 
     private function saveVisualization(array $validated, array $fastApiResponse): Visualization
     {
+        // Tambahkan chart_recommendation ke config jika ada
+        $config = [
+            'prompt' => $validated['prompt'],
+            'confidence_score' => $fastApiResponse['confidence_score'] ?? 0.0,
+            'explanation' => $fastApiResponse['explanation'] ?? '',
+            'analysis' => $fastApiResponse['analysis'] ?? '',
+            'generated_at' => now()->format('Y-m-d H:i:s'),
+            'colors' => ['#4CAF50', '#FF9800', '#2196F3'],
+            'backgroundColor' => '#ffffff',
+            'title' => 'NL2SQL_' . time(),
+            'fontSize' => 14,
+            'fontFamily' => 'Arial',
+            'fontColor' => '#333',
+        ];
+
+        if (isset($fastApiResponse['chart_recommendation'])) {
+            $config['chart_recommendation'] = $fastApiResponse['chart_recommendation'];
+        }
+
         return Visualization::create([
             'id_canvas' => $validated['id_canvas'],
             'id_datasource' => $validated['id_datasource'],
             'name' => 'NL2SQL_' . time(),
-            'visualization_type' => 'table',
+            'visualization_type' => 'table', // Default, bisa diubah berdasarkan rekomendasi
             'query' => $fastApiResponse['sql_query'],
-            'config' => [
-                'prompt' => $validated['prompt'],
-                'confidence_score' => $fastApiResponse['confidence_score'] ?? 0.0,
-                'explanation' => $fastApiResponse['explanation'] ?? '',
-                'analysis' => $fastApiResponse['analysis'] ?? '',
-                'generated_at' => now()->format('Y-m-d H:i:s'),
-                'colors' => ['#4CAF50', '#FF9800', '#2196F3'],
-                'backgroundColor' => '#ffffff',
-                'title' => 'NL2SQL_' . time(),
-                'fontSize' => 14,
-                'fontFamily' => 'Arial',
-                'fontColor' => '#333',
-            ],
+            'config' => $config,
             'width' => 800,
             'height' => 350,
             'position_x' => 0,

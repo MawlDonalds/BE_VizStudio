@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\ApiGetDataController;
 use App\Http\Controllers\Api\ApiVisualizationController;
 use App\Http\Controllers\Api\ApiOtentikasiController;
 use App\Http\Controllers\Api\NL2SQLController;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Route;
@@ -63,4 +64,34 @@ Route::prefix('kelola-dashboard')->group(function () {
 
     Route::post('/nl2sql/generate', [NL2SQLController::class, 'generate']);
     Route::get('/nl2sql/test-connection', [NL2SQLController::class, 'testConnection']);
+});
+
+Route::prefix('chat')->group(function () {
+    Route::get('/sessions', function (Request $request) {
+        $response = Http::withHeaders([
+            'Authorization' => $request->header('Authorization'),
+        ])->get(env('FASTAPI_URL') . '/api/v1/chat/sessions');
+        return $response->json();
+    });
+
+    Route::get('/sessions/{sessionId}', function (Request $request, $sessionId) {
+        $response = Http::withHeaders([
+            'Authorization' => $request->header('Authorization'),
+        ])->get(env('FASTAPI_URL') . "/api/v1/chat/sessions/{$sessionId}/messages");
+        return $response->json();
+    });
+
+    Route::post('/sessions', function (Request $request) {
+        $response = Http::withHeaders([
+            'Authorization' => $request->header('Authorization'),
+        ])->post(env('FASTAPI_URL') . '/api/v1/chat/sessions', $request->all());
+        return $response->json();
+    });
+
+    Route::delete('/sessions/{sessionId}', function (Request $request, $sessionId) {
+        $response = Http::withHeaders([
+            'Authorization' => $request->header('Authorization'),
+        ])->delete(env('FASTAPI_URL') . "/api/v1/chat/sessions/{$sessionId}/clear");
+        return $response->json();
+    });
 });
