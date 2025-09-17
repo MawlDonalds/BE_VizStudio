@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id('id_project_access');
             $table->unsignedBigInteger('id_project');
             $table->unsignedBigInteger('id_user');
-            $table->string('access', 4);
+            $table->string('access', 5);
             $table->string('created_by')->nullable();
             $table->timestamp('created_time')->nullable();
             $table->string('modified_by')->nullable();
@@ -32,6 +32,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('project_access');
+        Schema::dropIfExists('projects_access');
     }
 };

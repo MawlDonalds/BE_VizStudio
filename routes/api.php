@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\ApiELTController;
 use App\Http\Controllers\Api\ApiGetDataController;
 use App\Http\Controllers\Api\ApiVisualizationController;
 use App\Http\Controllers\Api\ApiOtentikasiController;
+use App\Http\Controllers\Api\ChatSessionController;
 use App\Http\Controllers\Api\NL2SQLController;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Http\Request;
