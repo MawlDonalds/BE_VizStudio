@@ -32,7 +32,7 @@ class NL2SQLController extends Controller
             'execute' => 'boolean',
             'save_visualization' => 'boolean',
             'id_canvas' => 'required_if:save_visualization,true|integer|exists:public.canvas,id_canvas',
-            'session_id' => 'nullable|integer|exists:chat_sessions,id_chat_session',
+            'session_id' => 'nullable|string|uuid', // Accept UUID string
             'auto_create_session' => 'boolean',
             'session_title' => 'nullable|string|max:255',
         ]);
@@ -223,13 +223,13 @@ class NL2SQLController extends Controller
             $sessionId = $validated['session_id'] ?? null;
 
             if ($sessionId) {
-                // Verify existing session
-                $session = $this->chatService->initializeSession($sessionId);
-                return $session->id_chat_session;
+                // Return UUID session_id directly for FastAPI compatibility
+                // The session should already exist in chat_sessions table
+                return $sessionId;
             }
 
             if ($validated['auto_create_session'] ?? false) {
-                // Create new session
+                // Create new session and return UUID
                 $title = $validated['session_title'] ?? null;
                 if (!$title) {
                     // Generate title from prompt
@@ -240,7 +240,7 @@ class NL2SQLController extends Controller
                 }
                 
                 $session = $this->chatService->initializeSession(null, $title);
-                return $session->id_chat_session;
+                return $session->session_id; // Return UUID instead of integer ID
             }
 
             return null;

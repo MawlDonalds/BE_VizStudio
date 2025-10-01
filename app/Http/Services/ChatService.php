@@ -7,6 +7,7 @@ use App\Models\ChatHistory;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+use Illuminate\Support\Str;
 
 class ChatService
 {
@@ -19,7 +20,7 @@ class ChatService
         
         if ($sessionId) {
             // Get existing session
-            $session = ChatSession::where('id_chat_session', $sessionId)
+            $session = ChatSession::where('session_id', $sessionId)
                 ->where('user_id', $user->id_user)
                 ->first();
                 
@@ -36,6 +37,7 @@ class ChatService
         }
         
         $session = ChatSession::create([
+            'session_id' => Str::uuid()->toString(),   // UUID baru
             'user_id' => $user->id_user,
             'title' => $title,
             'created_by' => $user->username ?? $user->email,
@@ -43,6 +45,7 @@ class ChatService
             'modified_by' => $user->username ?? $user->email,
             'modified_at' => Carbon::now()
         ]);
+
         
         return $session;
     }
@@ -56,8 +59,8 @@ class ChatService
             $user = Auth::user();
             $now = Carbon::now();
 
-            // Verify session belongs to user
-            $session = ChatSession::where('id_chat_session', $sessionId)
+            // Verify session belongs to user using UUID session_id
+            $session = ChatSession::where('session_id', $sessionId)
                 ->where('user_id', $user->id_user)
                 ->first();
 
@@ -113,7 +116,7 @@ class ChatService
             ->orderBy('modified_at', 'desc')
             ->limit($limit)
             ->select([
-                'id_chat_session',
+                'session_id',
                 'title',
                 'created_at',
                 'modified_at'
@@ -129,7 +132,7 @@ class ChatService
         try {
             $user = Auth::user();
 
-            $session = ChatSession::where('id_chat_session', $sessionId)
+            $session = ChatSession::where('session_id', $sessionId)
                 ->where('user_id', $user->id_user)
                 ->first();
 
@@ -183,7 +186,7 @@ class ChatService
         try {
             $user = Auth::user();
 
-            $session = ChatSession::where('id_chat_session', $sessionId)
+            $session = ChatSession::where('session_id', $sessionId)
                 ->where('user_id', $user->id_user)
                 ->first();
 
