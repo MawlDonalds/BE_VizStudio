@@ -1,0 +1,33 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('chat_history', function (Blueprint $table) {
+            $table->id(); // Primary key auto increment
+            $table->string('session_id')->index(); // String session_id, bukan foreign key
+            $table->string('role'); // 'human', 'ai', atau 'system'
+            $table->jsonb('content'); // Isi pesan dalam format JSON
+            $table->timestamp('created_at')->useCurrent(); // Default current timestamp
+            
+            // Index untuk performa query
+            $table->index(['session_id', 'created_at']);
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('chat_history');
+    }
+};

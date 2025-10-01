@@ -67,32 +67,49 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::get('/nl2sql/test-connection', [NL2SQLController::class, 'testConnection']);
 });
 
-Route::prefix('chat')->group(function () {
-    Route::get('/sessions', function (Request $request) {
-        $response = Http::withHeaders([
-            'Authorization' => $request->header('Authorization'),
-        ])->get(env('FASTAPI_URL') . '/api/v1/chat/sessions');
-        return $response->json();
-    });
+// Route::prefix('chat')->group(function () {
+//     Route::get('/sessions', function (Request $request) {
+//         $response = Http::withHeaders([
+//             'Authorization' => $request->header('Authorization'),
+//         ])->get(env('FASTAPI_URL') . '/api/v1/chat/sessions');
+//         return $response->json();
+//     });
 
-    Route::get('/sessions/{sessionId}', function (Request $request, $sessionId) {
-        $response = Http::withHeaders([
-            'Authorization' => $request->header('Authorization'),
-        ])->get(env('FASTAPI_URL') . "/api/v1/chat/sessions/{$sessionId}/messages");
-        return $response->json();
-    });
+//     Route::get('/sessions/{sessionId}', function (Request $request, $sessionId) {
+//         $response = Http::withHeaders([
+//             'Authorization' => $request->header('Authorization'),
+//         ])->get(env('FASTAPI_URL') . "/api/v1/chat/sessions/{$sessionId}/messages");
+//         return $response->json();
+//     });
 
-    Route::post('/sessions', function (Request $request) {
-        $response = Http::withHeaders([
-            'Authorization' => $request->header('Authorization'),
-        ])->post(env('FASTAPI_URL') . '/api/v1/chat/sessions', $request->all());
-        return $response->json();
-    });
+//     Route::post('/sessions', function (Request $request) {
+//         $response = Http::withHeaders([
+//             'Authorization' => $request->header('Authorization'),
+//         ])->post(env('FASTAPI_URL') . '/api/v1/chat/sessions', $request->all());
+//         return $response->json();
+//     });
 
-    Route::delete('/sessions/{sessionId}', function (Request $request, $sessionId) {
-        $response = Http::withHeaders([
-            'Authorization' => $request->header('Authorization'),
-        ])->delete(env('FASTAPI_URL') . "/api/v1/chat/sessions/{$sessionId}/clear");
-        return $response->json();
-    });
+//     Route::delete('/sessions/{sessionId}', function (Request $request, $sessionId) {
+//         $response = Http::withHeaders([
+//             'Authorization' => $request->header('Authorization'),
+//         ])->delete(env('FASTAPI_URL') . "/api/v1/chat/sessions/{$sessionId}/clear");
+//         return $response->json();
+//     });
+// });
+
+// Chat Session Management Routes
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Basic CRUD operations
+    Route::post('/chat-sessions', [ChatSessionController::class, 'createSession']);
+    Route::get('/chat-sessions', [ChatSessionController::class, 'listUserSessions']);
+    Route::get('/chat-sessions/{sessionId}', [ChatSessionController::class, 'getSessionHistory']);
+    Route::put('/chat-sessions/{sessionId}', [ChatSessionController::class, 'updateSession']);
+    Route::delete('/chat-sessions/{sessionId}', [ChatSessionController::class, 'deleteSession']);
+    
+    // Additional operations
+    Route::delete('/chat-sessions/{sessionId}/history', [ChatSessionController::class, 'clearSessionHistory']);
+    Route::get('/chat-sessions/{sessionId}/stats', [ChatSessionController::class, 'getSessionStats']);
+    
+    // FastAPI compatibility endpoint
+    Route::post('/chat-sessions/uuid/{sessionUuid}', [ChatSessionController::class, 'getOrCreateSessionByUuid']);
 });
