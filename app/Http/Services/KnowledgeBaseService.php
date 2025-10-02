@@ -22,29 +22,47 @@ class KnowledgeBaseService
 
     public function store(array $data)
     {
-        // Simpan ke database
-        $knowledge = KnowledgeBase::create($data);
+        try {
+            // Generate embedding terlebih dahulu
+            $embedding = $this->generateEmbedding($data['content']);
+            
+            if ($embedding === null) {
+                throw new \Exception('Failed to generate embedding for content');
+            }
+            
+            // Tambahkan embedding ke data
+            $data['embedding'] = $embedding;
+            
+            // Simpan ke database sekaligus dengan embedding
+            $knowledge = KnowledgeBase::create($data);
 
-        // Panggil FastAPI untuk generate embedding
-        $embedding = $this->generateEmbedding($knowledge->content);
-
-        // Update embedding di database
-        $knowledge->update(['embedding' => $embedding]);
-
-        return $knowledge;
+            return $knowledge;
+        } catch (\Exception $e) {
+            Log::error('Failed to store knowledge: ' . $e->getMessage());
+            throw new \Exception('Failed to store knowledge: ' . $e->getMessage());
+        }
     }
 
     public function update(KnowledgeBase $knowledge, array $data)
     {
-        $knowledge->update($data);
-
-        // Regenerate embedding jika content berubah
-        if (isset($data['content'])) {
-            $embedding = $this->generateEmbedding($knowledge->content);
-            $knowledge->update(['embedding' => $embedding]);
+        try {
+            // Regenerate embedding jika content berubah
+            if (isset($data['content'])) {
+                $embedding = $this->generateEmbedding($data['content']);
+                
+                if ($embedding === null) {
+                    throw new \Exception('Failed to generate embedding for updated content');
+                }
+                
+                $data['embedding'] = $embedding;
+            }
+            
+            $knowledge->update($data);
+            return $knowledge;
+        } catch (\Exception $e) {
+            Log::error('Failed to update knowledge: ' . $e->getMessage());
+            throw new \Exception('Failed to update knowledge: ' . $e->getMessage());
         }
-
-        return $knowledge;
     }
 
     public function destroy(KnowledgeBase $knowledge)
@@ -52,7 +70,7 @@ class KnowledgeBaseService
         $knowledge->delete();
     }
 
-    protected function generateEmbedding(string $content): string
+    protected function generateEmbedding(string $content): ?string
     {
         try {
             $response = $this->client->post($this->fastApiUrl, [
@@ -62,15 +80,16 @@ class KnowledgeBaseService
             $body = $response->getBody()->getContents();
             $decoded = json_decode($body, true);
 
-            if (isset($decoded['embedding'])) {
-                // Simpan sebagai string '[0.1,0.2,...]' untuk pgvector
+            if (isset($decoded['embedding']) && is_array($decoded['embedding'])) {
+                // Konversi ke format pgvector: [0.1,0.2,0.3,...]
                 return '[' . implode(',', $decoded['embedding']) . ']';
             }
 
-            throw new \Exception('Invalid embedding response');
+            throw new \Exception('Invalid embedding response: ' . $body);
         } catch (\Exception $e) {
             Log::error('Failed to generate embedding: ' . $e->getMessage());
-            return '[]'; // Fallback empty vector
+            Log::error('Error details: ' . $e->getTraceAsString());
+            return null; // Return null jika gagal
         }
     }
 }

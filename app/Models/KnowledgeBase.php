@@ -19,6 +19,8 @@ class KnowledgeBase extends Model
         'embedding',
     ];
 
+    // Tidak perlu casting untuk pgvector - akan disimpan sebagai string vector
+
     public function datasource()
     {
         return $this->belongsTo(Datasource::class, 'id_datasource');

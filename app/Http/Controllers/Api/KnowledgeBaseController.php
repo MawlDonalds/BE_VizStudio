@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Services\KnowledgeBaseService;
 use Illuminate\Http\Request;
 use App\Models\KnowledgeBase;
+use Illuminate\Support\Facades\Log;
 
 class KnowledgeBaseController extends Controller
 {
@@ -18,45 +19,81 @@ class KnowledgeBaseController extends Controller
 
     public function index(Request $request)
     {
-        $query = KnowledgeBase::query();
-        if ($request->id_datasource) {
-            $query->where('id_datasource', $request->id_datasource);
+        try {
+            $query = KnowledgeBase::query();
+            if ($request->id_datasource) {
+                $query->where('id_datasource', $request->id_datasource);
+            }
+            return response()->json($query->get());
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch knowledge: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            return response()->json(['error' => 'Failed to fetch knowledge'], 500);
         }
-        return response()->json($query->get());
     }
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'id_datasource' => 'required|integer|exists:datasources,id_datasource',
-            'id_user' => 'required|integer|exists:users,user_id',
-            'entry_type' => 'required|string|max:50',
-            'term' => 'required|string|max:255',
-            'content' => 'required|string',
-        ]);
+        try {
+            $validated = $request->validate([
+                'id_datasource' => 'required|integer|exists:datasources,id_datasource',
+                'id_user' => 'required|integer|exists:users,id_user',
+                'entry_type' => 'required|string|max:50',
+                'term' => 'required|string|max:255',
+                'content' => 'required|string',
+            ]);
 
-        $knowledge = $this->knowledgeBaseService->store($validated);
-        return response()->json($knowledge, 201);
+            $knowledge = $this->knowledgeBaseService->store($validated);
+            return response()->json($knowledge, 201);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::error('Validation failed: ' . json_encode($e->errors()), ['input' => $request->all()]);
+            return response()->json(['error' => $e->errors()], 422);
+        } catch (\Exception $e) {
+            Log::error('Failed to store knowledge: ' . $e->getMessage(), [
+                'input' => $request->all(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json(['error' => 'Failed to store knowledge: ' . $e->getMessage()], 500);
+        }
     }
 
     public function update(Request $request, $id)
     {
-        $knowledge = KnowledgeBase::findOrFail($id);
+        try {
+            $knowledge = KnowledgeBase::findOrFail($id);
 
-        $validated = $request->validate([
-            'entry_type' => 'string|max:50',
-            'term' => 'string|max:255',
-            'content' => 'string',
-        ]);
+            $validated = $request->validate([
+                'entry_type' => 'string|max:50',
+                'term' => 'string|max:255',
+                'content' => 'string',
+            ]);
 
-        $updated = $this->knowledgeBaseService->update($knowledge, $validated);
-        return response()->json($updated);
+            $updated = $this->knowledgeBaseService->update($knowledge, $validated);
+            return response()->json($updated);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::error('Validation failed: ' . json_encode($e->errors()), ['input' => $request->all()]);
+            return response()->json(['error' => $e->errors()], 422);
+        } catch (\Exception $e) {
+            Log::error('Failed to update knowledge: ' . $e->getMessage(), [
+                'id' => $id,
+                'input' => $request->all(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json(['error' => 'Failed to update knowledge: ' . $e->getMessage()], 500);
+        }
     }
 
     public function destroy($id)
     {
-        $knowledge = KnowledgeBase::findOrFail($id);
-        $this->knowledgeBaseService->destroy($knowledge);
-        return response()->json(null, 204);
+        try {
+            $knowledge = KnowledgeBase::findOrFail($id);
+            $this->knowledgeBaseService->destroy($knowledge);
+            return response()->json(null, 204);
+        } catch (\Exception $e) {
+            Log::error('Failed to delete knowledge: ' . $e->getMessage(), [
+                'id' => $id,
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json(['error' => 'Failed to delete knowledge'], 500);
+        }
     }
 }
