@@ -20,11 +20,17 @@ class KnowledgeBaseController extends Controller
     public function index(Request $request)
     {
         try {
+            $perPage = $request->input('per_page', 10); // Default 10 row per halaman
             $query = KnowledgeBase::query();
+            
             if ($request->id_datasource) {
                 $query->where('id_datasource', $request->id_datasource);
             }
-            return response()->json($query->get());
+
+            // Gunakan paginate untuk mengembalikan data dengan informasi paginasi
+            $knowledge = $query->paginate($perPage);
+
+            return response()->json($knowledge);
         } catch (\Exception $e) {
             Log::error('Failed to fetch knowledge: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             return response()->json(['error' => 'Failed to fetch knowledge'], 500);
