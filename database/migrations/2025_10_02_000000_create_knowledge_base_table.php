@@ -26,7 +26,7 @@ return new class extends Migration
 
             // Foreign key constraints
             $table->foreign('id_datasource')->references('id_datasource')->on('datasources')->onDelete('cascade');
-            $table->foreign('id_user')->references('user_id')->on('users')->onDelete('cascade');
+            $table->foreign('id_user')->references('id_user')->on('users')->onDelete('cascade');
             
             // Indexes
             $table->index(['id_datasource', 'entry_type']);
