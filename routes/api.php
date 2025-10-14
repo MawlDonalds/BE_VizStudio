@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\ApiGetDataController;
 use App\Http\Controllers\Api\ApiVisualizationController;
 use App\Http\Controllers\Api\ApiOtentikasiController;
 use App\Http\Controllers\Api\ChatSessionController;
+use App\Http\Controllers\Api\KnowledgeBaseController;
 use App\Http\Controllers\Api\NL2SQLController;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Http\Request;
@@ -65,6 +66,7 @@ Route::prefix('kelola-dashboard')->group(function () {
 
     Route::post('/nl2sql/generate', [NL2SQLController::class, 'generate']);
     Route::get('/nl2sql/test-connection', [NL2SQLController::class, 'testConnection']);
+    Route::resource('knowledge-base', KnowledgeBaseController::class);
 });
 
 // Route::prefix('chat')->group(function () {
