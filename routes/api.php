@@ -66,7 +66,11 @@ Route::prefix('kelola-dashboard')->group(function () {
 
     Route::post('/nl2sql/generate', [NL2SQLController::class, 'generate']);
     Route::get('/nl2sql/test-connection', [NL2SQLController::class, 'testConnection']);
-    Route::resource('knowledge-base', KnowledgeBaseController::class);
+    
+    // Knowledge Base routes dengan authentication
+    Route::middleware(['auth:sanctum'])->group(function () {
+        Route::resource('knowledge-base', KnowledgeBaseController::class);
+    });
 });
 
 // Route::prefix('chat')->group(function () {
