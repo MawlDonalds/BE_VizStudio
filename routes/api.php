@@ -63,12 +63,14 @@ Route::prefix('kelola-dashboard')->group(function () {
     Route::post('/etl/full-refresh', [ApiELTController::class, 'fullRefresh']);
     Route::post('/etl/delete', [ApiELTController::class, 'delete']);
     Route::get('/etl/stats', [ApiELTController::class, 'getLakeStats']);
-
-    Route::post('/nl2sql/generate', [NL2SQLController::class, 'generate']);
-    Route::get('/nl2sql/test-connection', [NL2SQLController::class, 'testConnection']);
     
-    // Knowledge Base routes dengan authentication
+    // Routes yang memerlukan authentication
     Route::middleware(['auth:sanctum'])->group(function () {
+        // NL2SQL routes dengan user context
+        Route::post('/nl2sql/generate', [NL2SQLController::class, 'generate']);
+        Route::get('/nl2sql/test-connection', [NL2SQLController::class, 'testConnection']);
+        
+        // Knowledge Base routes
         Route::resource('knowledge-base', KnowledgeBaseController::class);
     });
 });

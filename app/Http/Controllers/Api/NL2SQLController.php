@@ -8,6 +8,7 @@ use App\Http\Services\ChatService;
 use App\Models\Datasource;
 use App\Models\Visualization;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -44,12 +45,17 @@ class NL2SQLController extends Controller
 
             // Handle chat session
             $sessionId = $this->handleChatSession($validated);
+            
+            // Ambil user yang sedang login untuk filter knowledge base
+            $user = Auth::user();
+            $userId = $user ? $user->id_user : null;
 
             $requestData = [
                 'prompt' => $validated['prompt'],
                 'id_datasource' => $validated['id_datasource'],
                 'table_names' => $validated['table_names'] ?? null,
                 'session_id' => $sessionId,
+                'user_id' => $userId, // Tambahkan user_id untuk filter knowledge
             ];
 
             Log::info('NL2SQL Request', [
